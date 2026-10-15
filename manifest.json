@@ -1,0 +1,10 @@
+{
+	"id": "note-steward",
+	"name": "Note Steward",
+	"version": "1.0.0",
+	"minAppVersion": "1.6.6",
+	"description": "Tracks attachment ownership, references, migrations, and safe cleanup.",
+	"author": "Gh-Shinku",
+	"authorUrl": "https://github.com/Gh-Shinku",
+	"isDesktopOnly": false
+}

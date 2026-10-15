@@ -1,0 +1,194 @@
+.note-steward-review {
+	--note-steward-gap: 0.75rem;
+	padding: var(--size-4-3);
+}
+
+.note-steward-header,
+.note-steward-card-title,
+.note-steward-card-actions,
+.note-steward-modal-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--note-steward-gap);
+}
+
+.note-steward-header h2 {
+	margin: 0;
+}
+
+.note-steward-muted,
+.note-steward-path,
+.note-steward-meta {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.note-steward-actions,
+.note-steward-filters,
+.note-steward-bulk,
+.note-steward-sources {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+}
+
+.note-steward-filters {
+	margin-block: var(--size-4-4);
+}
+
+.note-steward-filters input {
+	flex: 1 1 14rem;
+}
+
+.note-steward-filters select {
+	min-width: 8rem;
+}
+
+.note-steward-bulk {
+	justify-content: flex-end;
+	margin-block-end: var(--size-4-3);
+}
+
+.note-steward-list {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 28rem), 1fr));
+	gap: var(--note-steward-gap);
+}
+
+.note-steward-card {
+	display: grid;
+	grid-template-columns: 8rem minmax(0, 1fr);
+	gap: var(--note-steward-gap);
+	padding: var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-primary-alt);
+}
+
+.note-steward-preview {
+	display: grid;
+	place-items: center;
+	min-height: 7rem;
+	overflow: hidden;
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
+}
+
+.note-steward-preview img,
+.note-steward-preview video,
+.note-steward-preview iframe {
+	width: 100%;
+	height: 8rem;
+	border: 0;
+	object-fit: contain;
+}
+
+.note-steward-preview audio {
+	width: 95%;
+}
+
+.note-steward-file-icon {
+	display: grid;
+	place-items: center;
+	gap: var(--size-4-1);
+	color: var(--text-muted);
+}
+
+.note-steward-file-icon svg {
+	width: 2.5rem;
+	height: 2.5rem;
+}
+
+.note-steward-card-body,
+.note-steward-sources {
+	min-width: 0;
+}
+
+.note-steward-name {
+	max-width: 75%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: var(--font-semibold);
+}
+
+.note-steward-path,
+.note-steward-meta,
+.note-steward-issue {
+	margin-block: var(--size-4-1);
+	overflow-wrap: anywhere;
+}
+
+.note-steward-issue {
+	color: var(--text-error);
+	font-size: var(--font-ui-smaller);
+}
+
+.note-steward-badge {
+	padding: 0.1rem 0.45rem;
+	border-radius: 999px;
+	background: var(--background-modifier-hover);
+	font-size: var(--font-ui-smaller);
+	white-space: nowrap;
+}
+
+.note-steward-badge.is-unclaimed,
+.note-steward-badge.is-owner-missing,
+.note-steward-badge.is-needs-repair {
+	color: var(--text-warning);
+}
+
+.note-steward-sources {
+	flex-direction: column;
+	align-items: flex-start;
+	margin-block: var(--size-4-2);
+}
+
+.note-steward-sources button {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.note-steward-card-actions {
+	justify-content: flex-start;
+	flex-wrap: wrap;
+	margin-block-start: var(--size-4-2);
+}
+
+.note-steward-empty {
+	padding: var(--size-4-6);
+	text-align: center;
+	color: var(--text-muted);
+}
+
+.note-steward-confirm-paths {
+	max-height: 16rem;
+	overflow: auto;
+	padding-inline-start: 1.5rem;
+}
+
+.note-steward-confirm-check {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--size-4-2);
+	margin-block: var(--size-4-3);
+}
+
+.note-steward-modal-actions {
+	justify-content: flex-end;
+	margin-block-start: var(--size-4-4);
+}
+
+@media (max-width: 600px) {
+	.note-steward-card {
+		grid-template-columns: 1fr;
+	}
+
+	.note-steward-preview img,
+	.note-steward-preview video,
+	.note-steward-preview iframe {
+		height: 12rem;
+	}
+}
