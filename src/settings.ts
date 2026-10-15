@@ -2,7 +2,6 @@ import {
 	App,
 	Plugin,
 	PluginSettingTab,
-	Setting,
 	type SettingDefinitionItem,
 } from 'obsidian';
 import { translations } from './i18n';
@@ -47,26 +46,6 @@ export class NoteStewardSettingTab extends PluginSettingTab {
 	async setControlValue(key: string, value: unknown): Promise<void> {
 		if (key !== 'locale' || !isLocale(value)) return;
 		await this.service.setLocale(value);
-	}
-
-	display(): void {
-		const { containerEl } = this;
-		const t = translations(this.service.persistedData.settings.locale);
-		containerEl.empty();
-		new Setting(containerEl).setName('').setHeading();
-		new Setting(containerEl)
-			.setName(t.language)
-			.setDesc(t.languageDesc)
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOption('auto', t.auto)
-					.addOption('en', t.english)
-					.addOption('zh-CN', t.chinese)
-					.setValue(this.service.persistedData.settings.locale)
-					.onChange(async (value) => {
-						await this.service.setLocale(value as LocaleSetting);
-					}),
-			);
 	}
 }
 

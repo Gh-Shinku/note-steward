@@ -92,7 +92,7 @@ export default class NoteStewardPlugin extends Plugin {
 				this.app.workspace.getLeaf(true);
 			await leaf.setViewState({ type: REVIEW_VIEW_TYPE, active: true });
 		}
-		this.app.workspace.setActiveLeaf(leaf, { focus: true });
+		await this.app.workspace.revealLeaf(leaf);
 		if (leaf.view instanceof ReviewView)
 			leaf.view.setOwnerFilter(ownerPath);
 	}
