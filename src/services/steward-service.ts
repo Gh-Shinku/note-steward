@@ -45,6 +45,13 @@ export class StewardService {
 	private readonly listeners = new Set<ChangeListener>();
 	private operationQueue: Promise<void> = Promise.resolve();
 	private reconcileTimer: number | null = null;
+	private reconcileQueued = false;
+	private fullReconcileRequested = false;
+	private initialResolutionHandled = false;
+	private readonly pendingReferenceSources = new Set<string>();
+	private readonly internalRenames = new WeakMap<TAbstractFile, string>();
+	private readonly internalDeletes = new WeakSet<TAbstractFile>();
+	private readonly internalFolderCreates = new Set<string>();
 	private readonly metadataClassifications = new Map<
 		string,
 		MetadataClassification
@@ -60,39 +67,47 @@ export class StewardService {
 
 	register(plugin: Plugin): void {
 		plugin.registerEvent(
-			this.app.vault.on('create', () => this.scheduleReconcile()),
+			this.app.vault.on('create', (file) => {
+				if (this.internalFolderCreates.delete(file.path)) return;
+				this.scheduleFullReconcile();
+			}),
 		);
 		plugin.registerEvent(
 			this.app.vault.on('rename', (file, oldPath) => {
+				const expectedPath = this.internalRenames.get(file);
+				if (expectedPath !== undefined) {
+					this.internalRenames.delete(file);
+					if (expectedPath === file.path) return;
+				}
 				this.enqueue(async () => this.handleRename(file, oldPath));
 			}),
 		);
 		plugin.registerEvent(
 			this.app.vault.on('delete', (file) => {
+				if (this.internalDeletes.delete(file)) return;
 				this.enqueue(async () => this.handleDelete(file));
 			}),
 		);
 		plugin.registerEvent(
-			this.app.metadataCache.on('resolved', () =>
-				this.scheduleReconcile(),
-			),
+			this.app.metadataCache.on('resolve', (file) => {
+				if (file.extension === 'md')
+					this.scheduleReferenceReconcile(file.path);
+			}),
 		);
 		plugin.registerEvent(
-			this.app.metadataCache.on('changed', () =>
-				this.scheduleReconcile(),
-			),
-		);
-		plugin.registerEvent(
-			this.app.metadataCache.on('deleted', () =>
-				this.scheduleReconcile(),
-			),
+			this.app.metadataCache.on('resolved', () => {
+				if (this.initialResolutionHandled) return;
+				this.initialResolutionHandled = true;
+				this.scheduleFullReconcile();
+			}),
 		);
 		plugin.register(() => {
 			if (this.reconcileTimer !== null)
 				window.clearTimeout(this.reconcileTimer);
 		});
 		this.app.workspace.onLayoutReady(() => {
-			this.enqueue(async () => this.scanVault(true));
+			this.initialResolutionHandled = true;
+			this.scheduleFullReconcile();
 		});
 	}
 
@@ -147,18 +162,21 @@ export class StewardService {
 
 	getDocumentTreeItems(): DocumentTreeItem[] {
 		const attachments = this.getReviewItems();
+		const attachmentsByOwner = new Map<string, ReviewItem[]>();
+		for (const attachment of attachments) {
+			if (!attachment.ownerDocumentId) continue;
+			const owned =
+				attachmentsByOwner.get(attachment.ownerDocumentId) ?? [];
+			owned.push(attachment);
+			attachmentsByOwner.set(attachment.ownerDocumentId, owned);
+		}
 		return Object.values(this.data.documents)
 			.filter((document) => document.exists)
 			.flatMap((document) => {
 				const file = this.app.vault.getFileByPath(document.path);
 				if (!(file instanceof TFile) || file.extension !== 'md')
 					return [];
-				const owned = attachments
-					.filter(
-						(attachment) =>
-							attachment.ownerDocumentId === document.id,
-					)
-					.sort((left, right) => left.path.localeCompare(right.path));
+				const owned = attachmentsByOwner.get(document.id) ?? [];
 				if (owned.length === 0) return [];
 				return [
 					{
@@ -192,7 +210,7 @@ export class StewardService {
 
 	async rebuildIndex(): Promise<void> {
 		return this.runExclusive(async () => {
-			await this.scanVault(false, true);
+			await this.scanVault(false, true, false);
 			for (const attachment of Object.values(this.data.attachments)) {
 				if (attachment.ownerDocumentId)
 					await this.moveAttachmentToOwner(attachment);
@@ -231,7 +249,7 @@ export class StewardService {
 					{ ...(this.data.references[id] ?? {}) },
 				]),
 			);
-			await this.scanVault(false);
+			await this.scanVault(false, false, false);
 			let deleted = 0;
 			let skipped = 0;
 			for (const id of attachmentIds) {
@@ -250,7 +268,7 @@ export class StewardService {
 					skipped += 1;
 					continue;
 				}
-				await this.app.fileManager.trashFile(file);
+				await this.trashInternally(file);
 				delete this.data.attachments[id];
 				delete this.data.references[id];
 				deleted += 1;
@@ -260,13 +278,46 @@ export class StewardService {
 		});
 	}
 
-	private scheduleReconcile(): void {
+	private scheduleFullReconcile(): void {
+		this.fullReconcileRequested = true;
+		this.scheduleReconcileFlush();
+	}
+
+	private scheduleReferenceReconcile(sourcePath: string): void {
+		this.pendingReferenceSources.add(sourcePath);
+		this.scheduleReconcileFlush();
+	}
+
+	private scheduleReconcileFlush(): void {
 		if (this.reconcileTimer !== null)
 			window.clearTimeout(this.reconcileTimer);
 		this.reconcileTimer = window.setTimeout(() => {
 			this.reconcileTimer = null;
-			this.enqueue(async () => this.scanVault(false));
+			this.flushReconcileRequests();
 		}, 750);
+	}
+
+	private flushReconcileRequests(): void {
+		if (this.reconcileQueued) return;
+		this.reconcileQueued = true;
+		this.enqueue(async () => {
+			try {
+				do {
+					const full = this.fullReconcileRequested;
+					const sources = new Set(this.pendingReferenceSources);
+					this.fullReconcileRequested = false;
+					this.pendingReferenceSources.clear();
+					if (full) await this.scanVault(true);
+					else if (sources.size > 0)
+						await this.reconcileReferenceSources(sources);
+				} while (
+					this.fullReconcileRequested ||
+					this.pendingReferenceSources.size > 0
+				);
+			} finally {
+				this.reconcileQueued = false;
+			}
+		});
 	}
 
 	private enqueue(operation: () => Promise<void>): void {
@@ -287,11 +338,19 @@ export class StewardService {
 	private async scanVault(
 		moveNewClaims: boolean,
 		rebuildOwnership = false,
+		persist = true,
 	): Promise<void> {
 		const previousAttachments = this.data.attachments;
 		const previousDocuments = this.data.documents;
 		const issues: IndexIssue[] = [];
 		const documents = this.discoverDocuments(previousDocuments, issues);
+		const previousAttachmentsByPath = new Map(
+			Object.values(previousAttachments).map((record) => [
+				record.path,
+				record,
+			]),
+		);
+		const ownersByFolder = this.buildOwnersByFolder(documents);
 		const referencesByPath = this.buildReferenceSnapshot();
 		const attachments: Record<string, AttachmentRecord> = {};
 		const references: Record<string, Record<string, number>> = {};
@@ -301,9 +360,7 @@ export class StewardService {
 
 		for (const file of this.app.vault.getFiles()) {
 			if (file.extension === 'md') continue;
-			const previous = Object.values(previousAttachments).find(
-				(record) => record.path === file.path,
-			);
+			const previous = previousAttachmentsByPath.get(file.path);
 			if (file.extension.toLocaleLowerCase() === 'json') {
 				scannedJsonPaths.add(file.path);
 				if (await this.isDocumentMetadata(file)) {
@@ -324,10 +381,7 @@ export class StewardService {
 					};
 			record.path = file.path;
 			if (!previous && !record.ownerDocumentId) {
-				const inferredOwner = this.inferOwnerFromPath(
-					file.path,
-					documents,
-				);
+				const inferredOwner = ownersByFolder.get(parentPath(file.path));
 				if (inferredOwner) {
 					record.ownerDocumentId = inferredOwner.id;
 					record.ownershipState = 'owned';
@@ -378,14 +432,10 @@ export class StewardService {
 			references[record.id] = currentReferences;
 		}
 
+		const attachmentIds = new Set(Object.keys(attachments));
 		for (const previous of Object.values(previousAttachments)) {
 			if (excludedAttachmentIds.has(previous.id)) continue;
-			if (
-				Object.values(attachments).some(
-					(record) => record.id === previous.id,
-				)
-			)
-				continue;
+			if (attachmentIds.has(previous.id)) continue;
 			issues.push({
 				id: createId(),
 				kind: 'missing-file',
@@ -397,6 +447,15 @@ export class StewardService {
 			if (!scannedJsonPaths.has(path))
 				this.metadataClassifications.delete(path);
 		}
+		const ownerDocumentIds = new Set(
+			Object.values(attachments)
+				.map((attachment) => attachment.ownerDocumentId)
+				.filter((id): id is string => id !== null),
+		);
+		for (const [id, document] of Object.entries(documents)) {
+			if (!document.exists && !ownerDocumentIds.has(id))
+				delete documents[id];
+		}
 
 		this.data = {
 			...this.data,
@@ -406,11 +465,72 @@ export class StewardService {
 			issues,
 			lastIndexedAt: Date.now(),
 		};
-		await this.saveAndNotify();
-
 		const toMove = moveNewClaims ? newlyClaimed : [];
 		for (const record of toMove) await this.moveAttachmentToOwner(record);
-		if (toMove.length > 0) await this.saveAndNotify();
+		if (persist) await this.saveAndNotify();
+	}
+
+	private async reconcileReferenceSources(
+		sourcePaths: Set<string>,
+	): Promise<void> {
+		const attachments = Object.values(this.data.attachments);
+		const attachmentsByPath = new Map(
+			attachments.map((attachment) => [attachment.path, attachment]),
+		);
+		let changed = false;
+		const affected = new Set<AttachmentRecord>();
+		for (const attachment of attachments) {
+			const sources = (this.data.references[attachment.id] ??= {});
+			for (const sourcePath of Object.keys(sources)) {
+				if (!sourcePaths.has(sourcePath)) continue;
+				const nextCount =
+					this.app.metadataCache.resolvedLinks[sourcePath]?.[
+						attachment.path
+					];
+				if (nextCount === sources[sourcePath]) continue;
+				if (nextCount === undefined) delete sources[sourcePath];
+				else sources[sourcePath] = nextCount;
+				changed = true;
+				affected.add(attachment);
+			}
+		}
+		for (const sourcePath of sourcePaths) {
+			const destinations =
+				this.app.metadataCache.resolvedLinks[sourcePath] ?? {};
+			for (const [destinationPath, count] of Object.entries(
+				destinations,
+			)) {
+				const attachment = attachmentsByPath.get(destinationPath);
+				if (!attachment) continue;
+				const sources = (this.data.references[attachment.id] ??= {});
+				if (sources[sourcePath] === count) continue;
+				sources[sourcePath] = count;
+				changed = true;
+				affected.add(attachment);
+			}
+		}
+
+		for (const attachment of affected) {
+			if (attachment.ownerDocumentId) continue;
+			const references = this.data.references[attachment.id] ?? {};
+			if (Object.keys(references).length > 1)
+				attachment.claimBlocked = true;
+			if (!shouldAutoClaim(attachment, references)) continue;
+			const [sourcePath] = Object.keys(references);
+			const note = sourcePath
+				? this.app.vault.getFileByPath(sourcePath)
+				: null;
+			if (!(note instanceof TFile) || note.extension !== 'md') continue;
+			const document = await this.ensureDocument(note);
+			if (!document) continue;
+			attachment.ownerDocumentId = document.id;
+			attachment.ownershipState = 'owned';
+			attachment.claimedAt = Date.now();
+			attachment.claimBlocked = false;
+			await this.moveAttachmentToOwner(attachment);
+		}
+
+		if (changed) await this.saveAndNotify();
 	}
 
 	private async isDocumentMetadata(file: TFile): Promise<boolean> {
@@ -484,21 +604,28 @@ export class StewardService {
 		return snapshot;
 	}
 
-	private inferOwnerFromPath(
-		attachmentPath: string,
+	private buildOwnersByFolder(
 		documents: Record<string, DocumentRecord>,
-	): DocumentRecord | null {
-		const folder = parentPath(attachmentPath);
-		const matches = Object.values(documents).filter(
-			(document) =>
-				document.exists &&
-				expectedAttachmentFolder(document.path, document.id) === folder,
-		);
-		return matches.length === 1 ? (matches[0] ?? null) : null;
+	): Map<string, DocumentRecord | null> {
+		const owners = new Map<string, DocumentRecord | null>();
+		for (const document of Object.values(documents)) {
+			if (!document.exists) continue;
+			const folder = expectedAttachmentFolder(document.path, document.id);
+			owners.set(folder, owners.has(folder) ? null : document);
+		}
+		return owners;
 	}
 
 	private referencesForPath(path: string): Record<string, number> {
-		return this.buildReferenceSnapshot()[path] ?? {};
+		const references: Record<string, number> = {};
+		for (const [sourcePath, destinations] of Object.entries(
+			this.app.metadataCache.resolvedLinks,
+		)) {
+			if (!sourcePath.toLocaleLowerCase().endsWith('.md')) continue;
+			const count = destinations[path];
+			if (count !== undefined) references[sourcePath] = count;
+		}
+		return references;
 	}
 
 	private readDocumentId(note: TFile): string | null {
@@ -582,7 +709,12 @@ export class StewardService {
 			await this.ensureFolder(folder);
 			const desiredPath = normalizePath(`${folder}/${file.name}`);
 			const destination = this.findAvailablePath(desiredPath, file.path);
-			await this.app.fileManager.renameFile(file, destination);
+			this.internalRenames.set(file, destination);
+			try {
+				await this.app.fileManager.renameFile(file, destination);
+			} finally {
+				this.internalRenames.delete(file);
+			}
 			record.path = destination;
 			record.ownershipState = 'owned';
 			delete record.issue;
@@ -652,7 +784,7 @@ export class StewardService {
 	private async removeEmptyManagedFolder(folderPath: string): Promise<void> {
 		const folder = this.app.vault.getAbstractFileByPath(folderPath);
 		if (!(folder instanceof TFolder) || folder.children.length > 0) return;
-		await this.app.fileManager.trashFile(folder);
+		await this.trashInternally(folder);
 
 		const assetsPath = parentPath(folderPath);
 		const assetsFolder = this.app.vault.getAbstractFileByPath(assetsPath);
@@ -661,7 +793,16 @@ export class StewardService {
 			assetsFolder.name === 'assets' &&
 			assetsFolder.children.length === 0
 		) {
-			await this.app.fileManager.trashFile(assetsFolder);
+			await this.trashInternally(assetsFolder);
+		}
+	}
+
+	private async trashInternally(file: TAbstractFile): Promise<void> {
+		this.internalDeletes.add(file);
+		try {
+			await this.app.fileManager.trashFile(file);
+		} finally {
+			this.internalDeletes.delete(file);
 		}
 	}
 
@@ -688,7 +829,12 @@ export class StewardService {
 			if (existing instanceof TFolder) continue;
 			if (existing)
 				throw new Error(`${current} exists and is not a folder.`);
-			await this.app.vault.createFolder(current);
+			this.internalFolderCreates.add(current);
+			try {
+				await this.app.vault.createFolder(current);
+			} finally {
+				this.internalFolderCreates.delete(current);
+			}
 		}
 	}
 
@@ -702,7 +848,7 @@ export class StewardService {
 				(candidate) => candidate.path === oldPath,
 			);
 			if (!document) {
-				this.scheduleReconcile();
+				this.scheduleFullReconcile();
 				return;
 			}
 			const oldParent = parentPath(oldPath);
@@ -724,25 +870,35 @@ export class StewardService {
 			const attachment = Object.values(this.data.attachments).find(
 				(candidate) => candidate.path === oldPath,
 			);
-			if (attachment) attachment.path = file.path;
+			if (!attachment) {
+				this.scheduleFullReconcile();
+				return;
+			}
+			attachment.path = file.path;
 		}
 		await this.saveAndNotify();
-		this.scheduleReconcile();
 	}
 
 	private async handleDelete(file: TAbstractFile): Promise<void> {
 		if (!(file instanceof TFile)) return;
+		let changed = false;
 		if (file.extension === 'md') {
 			const document = Object.values(this.data.documents).find(
 				(candidate) => candidate.path === file.path,
 			);
 			if (document) {
 				document.exists = false;
+				changed = true;
 				for (const attachment of Object.values(this.data.attachments)) {
 					if (attachment.ownerDocumentId === document.id) {
 						attachment.ownershipState = 'owner-missing';
 					}
 				}
+			}
+			for (const sources of Object.values(this.data.references)) {
+				if (sources[file.path] === undefined) continue;
+				delete sources[file.path];
+				changed = true;
 			}
 		} else {
 			const entry = Object.entries(this.data.attachments).find(
@@ -751,10 +907,10 @@ export class StewardService {
 			if (entry) {
 				delete this.data.attachments[entry[0]];
 				delete this.data.references[entry[0]];
+				changed = true;
 			}
 		}
-		await this.saveAndNotify();
-		this.scheduleReconcile();
+		if (changed) await this.saveAndNotify();
 	}
 
 	private async saveAndNotify(): Promise<void> {

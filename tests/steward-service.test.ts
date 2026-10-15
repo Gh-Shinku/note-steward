@@ -14,6 +14,7 @@ interface Harness {
 	addFolder: (path: string) => TFolder;
 	addFile: (path: string, size?: number, content?: string) => TFile;
 	lastSaved: () => NoteStewardData | null;
+	saveCount: () => number;
 }
 
 function createHarness(
@@ -29,6 +30,7 @@ function createHarness(
 	const contents = new Map<string, string>();
 	const resolvedLinks: Record<string, Record<string, number>> = {};
 	let saved: NoteStewardData | null = null;
+	let saves = 0;
 
 	const setFilePath = (file: TFile, path: string): void => {
 		file.path = path;
@@ -160,6 +162,7 @@ function createHarness(
 		metadataCache,
 	} as unknown as App;
 	const service = new StewardService(app, loadedData, (data) => {
+		saves += 1;
 		saved = structuredClone(data);
 		return Promise.resolve();
 	});
@@ -172,6 +175,7 @@ function createHarness(
 		addFolder,
 		addFile,
 		lastSaved: () => saved,
+		saveCount: () => saves,
 	};
 }
 
@@ -293,6 +297,66 @@ describe('StewardService integration', () => {
 		expect(item?.ownershipState).toBe('unclaimed');
 		expect(item?.totalReferences).toBe(2);
 		expect(attachment.path).toBe('Inbox/image.png');
+	});
+
+	it('does not persist when incremental reference reconciliation is unchanged', async () => {
+		const harness = createHarness();
+		const note = harness.addFile('Note.md');
+		const attachment = harness.addFile('image.png');
+		harness.resolvedLinks[note.path] = { [attachment.path]: 1 };
+		await harness.service.rebuildIndex();
+		const saves = harness.saveCount();
+
+		await (
+			harness.service as unknown as {
+				reconcileReferenceSources: (
+					paths: Set<string>,
+				) => Promise<void>;
+			}
+		).reconcileReferenceSources(new Set([note.path]));
+
+		expect(harness.saveCount()).toBe(saves);
+	});
+
+	it('incrementally claims a newly referenced attachment and persists once', async () => {
+		const harness = createHarness();
+		const note = harness.addFile('Projects/Note.md');
+		const attachment = harness.addFile('Inbox/image.png');
+		await harness.service.rebuildIndex();
+		const saves = harness.saveCount();
+		harness.resolvedLinks[note.path] = { [attachment.path]: 1 };
+
+		await (
+			harness.service as unknown as {
+				reconcileReferenceSources: (
+					paths: Set<string>,
+				) => Promise<void>;
+			}
+		).reconcileReferenceSources(new Set([note.path]));
+
+		const item = harness.service.getReviewItems()[0];
+		expect(item?.ownerPath).toBe(note.path);
+		expect(item?.totalReferences).toBe(1);
+		expect(attachment.path).toMatch(
+			/^Projects\/assets\/[^/]+\/image\.png$/,
+		);
+		expect(harness.saveCount()).toBe(saves + 1);
+	});
+
+	it('prunes missing documents that no longer own attachments', async () => {
+		const data = createEmptyData();
+		data.documents.stale = {
+			id: 'stale',
+			path: 'Deleted.md',
+			exists: false,
+		};
+		const harness = createHarness(data);
+
+		await harness.service.rebuildIndex();
+
+		expect(harness.service.persistedData.documents).not.toHaveProperty(
+			'stale',
+		);
 	});
 
 	it('omits documents that own no attachments from the document tree', async () => {
