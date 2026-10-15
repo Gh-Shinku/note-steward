@@ -188,6 +188,37 @@ describe('StewardService integration', () => {
 		expect(harness.lastSaved()?.attachments[item?.id ?? '']?.path).toBe(
 			attachment.path,
 		);
+		expect(harness.service.getDocumentTreeItems()).toEqual([
+			expect.objectContaining({
+				documentId,
+				path: note.path,
+				name: 'Plan.md',
+				attachments: [expect.objectContaining({ id: item?.id })],
+			}),
+		]);
+	});
+
+	it('omits documents that own no attachments from the document tree', async () => {
+		const harness = createHarness();
+		const empty = harness.addFile('Empty.md');
+		harness.frontmatter.set(empty.path, { 'note-steward-id': 'empty' });
+		harness.addFile('orphan.png');
+
+		await harness.service.rebuildIndex();
+
+		expect(harness.service.getDocumentTreeItems()).toEqual([]);
+	});
+
+	it('omits an indexed owner document that is missing from the vault', async () => {
+		const harness = createHarness();
+		const note = harness.addFile('Note.md');
+		const attachment = harness.addFile('image.png');
+		harness.resolvedLinks[note.path] = { [attachment.path]: 1 };
+
+		await harness.service.rebuildIndex();
+		harness.files.delete(note.path);
+
+		expect(harness.service.getDocumentTreeItems()).toEqual([]);
 	});
 
 	it('keeps ambiguous ownership unclaimed even after only one source remains', async () => {

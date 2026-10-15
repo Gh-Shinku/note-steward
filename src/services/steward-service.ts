@@ -16,6 +16,7 @@ import {
 } from '../core/model';
 import {
 	AttachmentRecord,
+	DocumentTreeItem,
 	DocumentRecord,
 	FRONTMATTER_ID_KEY,
 	IndexIssue,
@@ -131,6 +132,33 @@ export class StewardService {
 			items.push(item);
 		}
 		return items.sort((left, right) => left.path.localeCompare(right.path));
+	}
+
+	getDocumentTreeItems(): DocumentTreeItem[] {
+		const attachments = this.getReviewItems();
+		return Object.values(this.data.documents)
+			.filter((document) => document.exists)
+			.flatMap((document) => {
+				const file = this.app.vault.getFileByPath(document.path);
+				if (!(file instanceof TFile) || file.extension !== 'md')
+					return [];
+				const owned = attachments
+					.filter(
+						(attachment) =>
+							attachment.ownerDocumentId === document.id,
+					)
+					.sort((left, right) => left.path.localeCompare(right.path));
+				if (owned.length === 0) return [];
+				return [
+					{
+						documentId: document.id,
+						path: document.path,
+						name: file.name,
+						attachments: owned,
+					},
+				];
+			})
+			.sort((left, right) => left.path.localeCompare(right.path));
 	}
 
 	getMarkdownFiles(): TFile[] {

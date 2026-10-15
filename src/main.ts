@@ -1,14 +1,20 @@
-import { Notice, Plugin, TFile, WorkspaceLeaf } from 'obsidian';
+import { Modal, Notice, Plugin } from 'obsidian';
 import { translations } from './i18n';
 import { StewardService } from './services/steward-service';
 import { NoteStewardSettingTab } from './settings';
 import { NoteStewardData } from './types';
-import { REVIEW_VIEW_TYPE, ReviewView } from './ui/review-view';
+import { AttachmentViewModal } from './ui/attachment-view-modal';
+import { DocumentViewModal } from './ui/document-view-modal';
 
 export default class NoteStewardPlugin extends Plugin {
 	private service!: StewardService;
+	private readonly openModals = new Set<Modal>();
 
 	async onload(): Promise<void> {
+		this.app.workspace.onLayoutReady(() => {
+			// Obsidian restores saved leaves after plugins start loading.
+			this.app.workspace.detachLeavesOfType('note-steward-review');
+		});
 		const loadedData: unknown = await this.loadData();
 		this.service = new StewardService(
 			this.app,
@@ -19,33 +25,32 @@ export default class NoteStewardPlugin extends Plugin {
 		);
 		this.service.register(this);
 
-		this.registerView(
-			REVIEW_VIEW_TYPE,
-			(leaf) => new ReviewView(leaf, this.service),
-		);
 		this.addSettingTab(
 			new NoteStewardSettingTab(this.app, this, this.service),
 		);
 
 		const t = translations(this.service.persistedData.settings.locale);
-		this.addRibbonIcon('archive-restore', t.openReview, () => {
-			void this.openReview();
-		});
-
 		this.addCommand({
-			id: 'open-attachment-review',
-			name: t.openReview,
-			callback: () => void this.openReview(),
+			id: 'open-document-view',
+			name: t.openDocumentView,
+			callback: () =>
+				this.openModal(
+					(onClose) =>
+						new DocumentViewModal(this.app, this.service, onClose),
+				),
 		});
 		this.addCommand({
-			id: 'review-current-note-attachments',
-			name: t.reviewCurrent,
-			checkCallback: (checking) => {
-				const file = this.app.workspace.getActiveFile();
-				if (!file || file.extension !== 'md') return false;
-				if (!checking) void this.openReview(file.path);
-				return true;
-			},
+			id: 'open-attachment-view',
+			name: t.openAttachmentView,
+			callback: () =>
+				this.openModal(
+					(onClose) =>
+						new AttachmentViewModal(
+							this.app,
+							this.service,
+							onClose,
+						),
+				),
 		});
 		this.addCommand({
 			id: 'repair-index',
@@ -67,34 +72,18 @@ export default class NoteStewardPlugin extends Plugin {
 					.catch((error: unknown) => this.reportError(error));
 			},
 		});
-
-		this.registerEvent(
-			this.app.workspace.on('file-menu', (menu, file) => {
-				if (!(file instanceof TFile) || file.extension !== 'md') return;
-				menu.addItem((item) =>
-					item
-						.setTitle(t.viewOwned)
-						.setIcon('archive-restore')
-						.onClick(() => void this.openReview(file.path)),
-				);
-			}),
-		);
 	}
 
-	onunload(): void {}
+	onunload(): void {
+		for (const modal of this.openModals) modal.close();
+		this.openModals.clear();
+	}
 
-	private async openReview(ownerPath: string | null = null): Promise<void> {
-		let leaf: WorkspaceLeaf | undefined =
-			this.app.workspace.getLeavesOfType(REVIEW_VIEW_TYPE)[0];
-		if (!leaf) {
-			leaf =
-				this.app.workspace.getRightLeaf(false) ??
-				this.app.workspace.getLeaf(true);
-			await leaf.setViewState({ type: REVIEW_VIEW_TYPE, active: true });
-		}
-		await this.app.workspace.revealLeaf(leaf);
-		if (leaf.view instanceof ReviewView)
-			leaf.view.setOwnerFilter(ownerPath);
+	private openModal(factory: (onClose: () => void) => Modal): void {
+		let modal: Modal;
+		modal = factory(() => this.openModals.delete(modal));
+		this.openModals.add(modal);
+		modal.open();
 	}
 
 	private reportError(error: unknown): void {

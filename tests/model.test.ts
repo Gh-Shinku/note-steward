@@ -3,12 +3,18 @@ import {
 	appendNumericSuffix,
 	createEmptyData,
 	expectedAttachmentFolder,
-	filterReviewItems,
+	filterAndSortAttachments,
+	filterDocumentTree,
 	hydrateData,
 	shouldAutoClaim,
 	sumReferenceCounts,
 } from '../src/core/model';
-import { AttachmentRecord, ReviewFilter, ReviewItem } from '../src/types';
+import {
+	AttachmentRecord,
+	AttachmentViewFilter,
+	DocumentTreeItem,
+	ReviewItem,
+} from '../src/types';
 
 const attachment: AttachmentRecord = {
 	id: 'asset-1',
@@ -19,14 +25,12 @@ const attachment: AttachmentRecord = {
 	claimBlocked: false,
 };
 
-const baseFilter: ReviewFilter = {
+const baseFilter: AttachmentViewFilter = {
 	query: '',
-	status: 'all',
+	reference: 'all',
+	ownership: 'all',
 	extension: '',
-	scope: 'vault',
-	currentNotePath: null,
-	folderPath: '',
-	ownerPath: null,
+	sort: 'references-asc',
 };
 
 const items: ReviewItem[] = [
@@ -110,40 +114,106 @@ describe('paths', () => {
 describe('review filters', () => {
 	it('finds zero-reference attachments', () => {
 		expect(
-			filterReviewItems(items, { ...baseFilter, status: 'orphaned' }),
-		).toHaveLength(1);
-	});
-
-	it('finds shared and unclaimed attachments', () => {
-		expect(
-			filterReviewItems(items, { ...baseFilter, status: 'shared' })[0]
-				?.id,
-		).toBe('two');
-		expect(
-			filterReviewItems(items, { ...baseFilter, status: 'unclaimed' })[0]
-				?.id,
-		).toBe('two');
-	});
-
-	it('scopes by owner folder and supports text search', () => {
-		expect(
-			filterReviewItems(items, {
+			filterAndSortAttachments(items, {
 				...baseFilter,
-				scope: 'folder',
-				folderPath: 'Projects',
-				query: 'image',
+				reference: 'zero',
 			}),
 		).toHaveLength(1);
 	});
 
-	it('scopes unclaimed attachments by their physical folder', () => {
+	it('finds referenced, shared, and ownership states', () => {
 		expect(
-			filterReviewItems(items, {
+			filterAndSortAttachments(items, {
 				...baseFilter,
-				scope: 'folder',
-				folderPath: 'Shared',
+				reference: 'referenced',
+			})[0]?.id,
+		).toBe('two');
+		expect(
+			filterAndSortAttachments(items, {
+				...baseFilter,
+				reference: 'shared',
+			})[0]?.id,
+		).toBe('two');
+		expect(
+			filterAndSortAttachments(items, {
+				...baseFilter,
+				ownership: 'unclaimed',
+			})[0]?.id,
+		).toBe('two');
+	});
+
+	it('searches attachment, owner, and reference source paths', () => {
+		expect(
+			filterAndSortAttachments(items, {
+				...baseFilter,
+				query: 'Plan.md',
+			}),
+		).toHaveLength(1);
+		expect(
+			filterAndSortAttachments(items, {
+				...baseFilter,
+				query: 'B.md',
 			}),
 		).toEqual([items[1]]);
+	});
+
+	it('filters by extension and sorts in all supported orders', () => {
+		expect(
+			filterAndSortAttachments(items, {
+				...baseFilter,
+				extension: 'pdf',
+			}),
+		).toEqual([items[1]]);
+		expect(
+			filterAndSortAttachments(items, {
+				...baseFilter,
+				sort: 'references-desc',
+			}).map((item) => item.id),
+		).toEqual(['two', 'one']);
+		expect(
+			filterAndSortAttachments(items, {
+				...baseFilter,
+				sort: 'name-asc',
+			}).map((item) => item.id),
+		).toEqual(['one', 'two']);
+		expect(
+			filterAndSortAttachments(items, {
+				...baseFilter,
+				sort: 'path-asc',
+			}).map((item) => item.id),
+		).toEqual(['one', 'two']);
+	});
+});
+
+describe('document tree', () => {
+	const tree: DocumentTreeItem[] = [
+		{
+			documentId: 'doc-1',
+			path: 'Projects/计划.md',
+			name: '计划.md',
+			attachments: [items[0] as ReviewItem],
+		},
+		{
+			documentId: 'doc-2',
+			path: 'Reports/Report.md',
+			name: 'Report.md',
+			attachments: [items[1] as ReviewItem],
+		},
+	];
+
+	it('keeps every attachment when the document matches', () => {
+		expect(filterDocumentTree(tree, '计划')).toEqual([tree[0]]);
+	});
+
+	it('keeps the parent but only matching attachments for attachment searches', () => {
+		const result = filterDocumentTree(tree, 'report.pdf');
+		expect(result).toHaveLength(1);
+		expect(result[0]?.path).toBe('Reports/Report.md');
+		expect(result[0]?.attachments).toEqual([items[1]]);
+	});
+
+	it('returns an empty tree when nothing matches', () => {
+		expect(filterDocumentTree(tree, 'missing')).toEqual([]);
 	});
 });
 

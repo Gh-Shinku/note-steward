@@ -1,20 +1,57 @@
-.note-steward-review {
-	--note-steward-gap: 0.75rem;
-	padding: var(--size-4-3);
+.modal.note-steward-modal {
+	width: min(1000px, calc(100vw - 3rem));
+	max-width: 1000px;
+	height: min(85vh, 900px);
+	padding: 0;
 }
 
-.note-steward-header,
-.note-steward-card-title,
-.note-steward-card-actions,
-.note-steward-modal-actions {
+.note-steward-modal .modal-title {
+	padding: var(--size-4-4) var(--size-4-5) var(--size-4-2);
+}
+
+.note-steward-modal .modal-content {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	height: 100%;
+	padding: 0;
+	overflow: hidden;
+}
+
+.note-steward-modal-controls {
+	position: sticky;
+	top: 0;
+	z-index: 1;
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	gap: var(--note-steward-gap);
+	gap: var(--size-4-2);
+	padding: var(--size-4-3) var(--size-4-5);
+	border-bottom: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
 }
 
-.note-steward-header h2 {
-	margin: 0;
+.note-steward-modal-controls input[type='search'] {
+	flex: 1 1 18rem;
+	min-width: 10rem;
+}
+
+.note-steward-attachment-controls {
+	flex-wrap: wrap;
+}
+
+.note-steward-attachment-controls input[type='search'] {
+	flex-basis: 100%;
+}
+
+.note-steward-attachment-controls select {
+	flex: 1 1 10rem;
+	min-width: 0;
+}
+
+.note-steward-modal-results {
+	min-height: 0;
+	padding: var(--size-4-3) var(--size-4-5) var(--size-4-5);
+	overflow: auto;
 }
 
 .note-steward-muted,
@@ -24,99 +61,111 @@
 	font-size: var(--font-ui-smaller);
 }
 
-.note-steward-actions,
-.note-steward-filters,
-.note-steward-bulk,
-.note-steward-sources {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--size-4-2);
+.note-steward-document-tree {
+	font-family: var(--font-monospace);
 }
 
-.note-steward-filters {
-	margin-block: var(--size-4-4);
+.note-steward-tree-group + .note-steward-tree-group {
+	margin-block-start: var(--size-4-3);
 }
 
-.note-steward-filters input {
-	flex: 1 1 14rem;
-}
-
-.note-steward-filters select {
-	min-width: 8rem;
-}
-
-.note-steward-bulk {
-	justify-content: flex-end;
-	margin-block-end: var(--size-4-3);
-}
-
-.note-steward-list {
-	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(min(100%, 28rem), 1fr));
-	gap: var(--note-steward-gap);
-}
-
-.note-steward-card {
-	display: grid;
-	grid-template-columns: 8rem minmax(0, 1fr);
-	gap: var(--note-steward-gap);
-	padding: var(--size-4-3);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-m);
-	background: var(--background-primary-alt);
-}
-
-.note-steward-preview {
-	display: grid;
-	place-items: center;
-	min-height: 7rem;
-	overflow: hidden;
-	border-radius: var(--radius-s);
-	background: var(--background-secondary);
-}
-
-.note-steward-preview img,
-.note-steward-preview video,
-.note-steward-preview iframe {
-	width: 100%;
-	height: 8rem;
-	border: 0;
-	object-fit: contain;
-}
-
-.note-steward-preview audio {
-	width: 95%;
-}
-
-.note-steward-file-icon {
-	display: grid;
-	place-items: center;
-	gap: var(--size-4-1);
-	color: var(--text-muted);
-}
-
-.note-steward-file-icon svg {
-	width: 2.5rem;
-	height: 2.5rem;
-}
-
-.note-steward-card-body,
-.note-steward-sources {
+.note-steward-tree-document,
+.note-steward-tree-attachment button,
+.note-steward-link-button {
 	min-width: 0;
+	height: auto;
+	padding: 0;
+	border: 0;
+	box-shadow: none;
+	background: transparent;
+	color: var(--text-normal);
+	font: inherit;
+	text-align: start;
 }
 
-.note-steward-name {
-	max-width: 75%;
+.note-steward-tree-document {
+	max-width: 100%;
+	font-weight: var(--font-semibold);
+	overflow-wrap: anywhere;
+}
+
+.note-steward-tree-attachment {
+	display: grid;
+	grid-template-columns: 3ch minmax(0, 1fr);
+	align-items: baseline;
+	gap: 1ch;
+	padding-inline-start: var(--size-4-2);
+}
+
+.note-steward-tree-attachment button {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-weight: var(--font-semibold);
+}
+
+.note-steward-tree-branch {
+	color: var(--text-muted);
+	user-select: none;
+}
+
+.note-steward-selection-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--size-4-3);
+	padding: var(--size-4-2) var(--size-4-5);
+	border-bottom: 1px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+}
+
+.note-steward-selection-actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: var(--size-4-2);
+}
+
+.note-steward-attachment-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+}
+
+.note-steward-attachment-row {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	align-items: start;
+	gap: var(--size-4-3);
+	padding: var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+}
+
+.note-steward-attachment-row > input[type='checkbox'] {
+	margin-block-start: 0.25rem;
+}
+
+.note-steward-attachment-content {
+	min-width: 0;
+}
+
+.note-steward-attachment-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--size-4-3);
+}
+
+.note-steward-link-button {
+	max-width: 100%;
+	color: var(--link-color);
+	overflow-wrap: anywhere;
 }
 
 .note-steward-path,
 .note-steward-meta,
 .note-steward-issue {
-	margin-block: var(--size-4-1);
+	margin-block-start: var(--size-4-1);
 	overflow-wrap: anywhere;
 }
 
@@ -126,11 +175,11 @@
 }
 
 .note-steward-badge {
+	flex: 0 0 auto;
 	padding: 0.1rem 0.45rem;
-	border-radius: 999px;
+	border-radius: var(--radius-s);
 	background: var(--background-modifier-hover);
 	font-size: var(--font-ui-smaller);
-	white-space: nowrap;
 }
 
 .note-steward-badge.is-unclaimed,
@@ -139,21 +188,10 @@
 	color: var(--text-warning);
 }
 
-.note-steward-sources {
-	flex-direction: column;
-	align-items: flex-start;
-	margin-block: var(--size-4-2);
-}
-
-.note-steward-sources button {
-	max-width: 100%;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.note-steward-card-actions {
-	justify-content: flex-start;
+.note-steward-reference-list {
+	display: flex;
 	flex-wrap: wrap;
+	gap: var(--size-4-2) var(--size-4-3);
 	margin-block-start: var(--size-4-2);
 }
 
@@ -177,18 +215,42 @@
 }
 
 .note-steward-modal-actions {
+	display: flex;
+	align-items: center;
 	justify-content: flex-end;
+	gap: var(--size-4-2);
 	margin-block-start: var(--size-4-4);
 }
 
 @media (max-width: 600px) {
-	.note-steward-card {
-		grid-template-columns: 1fr;
+	.modal.note-steward-modal {
+		width: calc(100vw - 1rem);
+		max-width: none;
+		height: calc(100vh - 1rem);
+		max-height: none;
 	}
 
-	.note-steward-preview img,
-	.note-steward-preview video,
-	.note-steward-preview iframe {
-		height: 12rem;
+	.note-steward-modal-controls,
+	.note-steward-selection-bar {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.note-steward-modal-controls {
+		flex-wrap: nowrap;
+	}
+
+	.note-steward-modal-controls,
+	.note-steward-modal-results,
+	.note-steward-selection-bar {
+		padding-inline: var(--size-4-3);
+	}
+
+	.note-steward-selection-actions {
+		justify-content: stretch;
+	}
+
+	.note-steward-selection-actions button {
+		flex: 1 1 auto;
 	}
 }

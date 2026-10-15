@@ -1,8 +1,9 @@
 import {
 	AttachmentRecord,
+	AttachmentViewFilter,
 	DATA_SCHEMA_VERSION,
+	DocumentTreeItem,
 	NoteStewardData,
-	ReviewFilter,
 	ReviewItem,
 } from '../types';
 
@@ -73,53 +74,86 @@ export function appendNumericSuffix(path: string, attempt: number): string {
 	return `${directory}${filename.slice(0, dot)}-${attempt}${filename.slice(dot)}`;
 }
 
-export function filterReviewItems(
+export function filterDocumentTree(
+	items: DocumentTreeItem[],
+	queryValue: string,
+): DocumentTreeItem[] {
+	const query = queryValue.trim().toLocaleLowerCase();
+	if (!query) return items;
+
+	return items.flatMap((document) => {
+		const documentMatches = [document.name, document.path].some((value) =>
+			value.toLocaleLowerCase().includes(query),
+		);
+		const attachments = documentMatches
+			? document.attachments
+			: document.attachments.filter((attachment) =>
+					[attachment.name, attachment.path].some((value) =>
+						value.toLocaleLowerCase().includes(query),
+					),
+				);
+		return attachments.length > 0 ? [{ ...document, attachments }] : [];
+	});
+}
+
+export function filterAndSortAttachments(
 	items: ReviewItem[],
-	filter: ReviewFilter,
+	filter: AttachmentViewFilter,
 ): ReviewItem[] {
 	const query = filter.query.trim().toLocaleLowerCase();
-	return items.filter((item) => {
+	const filtered = items.filter((item) => {
 		if (
 			query &&
-			![item.name, item.path, item.ownerPath ?? ''].some((value) =>
-				value.toLocaleLowerCase().includes(query),
-			)
+			![
+				item.name,
+				item.path,
+				item.ownerPath ?? '',
+				...item.references.map((reference) => reference.path),
+			].some((value) => value.toLocaleLowerCase().includes(query))
 		) {
 			return false;
 		}
 
 		if (filter.extension && item.extension !== filter.extension)
 			return false;
-		if (filter.ownerPath && item.ownerPath !== filter.ownerPath)
-			return false;
-
 		if (
-			filter.scope === 'current-note' &&
-			item.ownerPath !== filter.currentNotePath
+			filter.ownership !== 'all' &&
+			item.ownershipState !== filter.ownership
 		) {
 			return false;
 		}
-		if (filter.scope === 'folder') {
-			const prefix = filter.folderPath ? `${filter.folderPath}/` : '';
-			if (prefix && !item.path.startsWith(prefix)) return false;
-		}
 
-		switch (filter.status) {
-			case 'orphaned':
+		switch (filter.reference) {
+			case 'zero':
 				return item.totalReferences === 0;
+			case 'referenced':
+				return item.totalReferences > 0;
 			case 'shared':
 				return item.references.length > 1;
-			case 'unclaimed':
-				return item.ownershipState === 'unclaimed';
-			case 'owner-missing':
-				return item.ownershipState === 'owner-missing';
-			case 'needs-repair':
-				return (
-					item.ownershipState === 'needs-repair' ||
-					Boolean(item.issue)
-				);
 			case 'all':
 				return true;
+		}
+	});
+
+	return filtered.sort((left, right) => {
+		switch (filter.sort) {
+			case 'references-asc':
+				return (
+					left.totalReferences - right.totalReferences ||
+					left.path.localeCompare(right.path)
+				);
+			case 'references-desc':
+				return (
+					right.totalReferences - left.totalReferences ||
+					left.path.localeCompare(right.path)
+				);
+			case 'name-asc':
+				return (
+					left.name.localeCompare(right.name) ||
+					left.path.localeCompare(right.path)
+				);
+			case 'path-asc':
+				return left.path.localeCompare(right.path);
 		}
 	});
 }

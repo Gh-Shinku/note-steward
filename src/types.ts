@@ -68,22 +68,22 @@ export interface ReviewItem {
 	issue?: string;
 }
 
-export type ReviewStatus =
-	| 'all'
-	| 'orphaned'
-	| 'shared'
-	| 'unclaimed'
-	| 'owner-missing'
-	| 'needs-repair';
+export interface DocumentTreeItem {
+	documentId: string;
+	path: string;
+	name: string;
+	attachments: ReviewItem[];
+}
 
-export type ReviewScope = 'vault' | 'current-note' | 'folder';
+export type ReferenceFilter = 'all' | 'zero' | 'referenced' | 'shared';
+export type OwnershipFilter = 'all' | OwnershipState;
+export type AttachmentSort =
+	'references-asc' | 'references-desc' | 'name-asc' | 'path-asc';
 
-export interface ReviewFilter {
+export interface AttachmentViewFilter {
 	query: string;
-	status: ReviewStatus;
+	reference: ReferenceFilter;
+	ownership: OwnershipFilter;
 	extension: string;
-	scope: ReviewScope;
-	currentNotePath: string | null;
-	folderPath: string;
-	ownerPath: string | null;
+	sort: AttachmentSort;
 }
