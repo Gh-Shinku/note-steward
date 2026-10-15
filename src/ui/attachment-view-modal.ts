@@ -10,6 +10,7 @@ import {
 	ReviewItem,
 } from '../types';
 import { ConfirmDeleteModal, formatBytes } from './confirm-delete-modal';
+import { bindImeAwareSearch } from './search-input';
 
 const DEFAULT_FILTER: AttachmentViewFilter = {
 	query: '',
@@ -93,8 +94,8 @@ export class AttachmentViewModal extends Modal {
 			attr: { 'aria-label': t.searchAttachments },
 		});
 		search.value = this.filter.query;
-		search.addEventListener('input', () => {
-			this.filter.query = search.value;
+		bindImeAwareSearch(search, (query) => {
+			this.filter.query = query;
 			this.selected.clear();
 			this.render();
 			this.focusSearch();

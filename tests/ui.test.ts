@@ -132,6 +132,28 @@ describe('document view modal', () => {
 		expect(document.querySelector('[aria-expanded="true"]')).not.toBeNull();
 	});
 
+	it('defers document filtering until IME composition is committed', () => {
+		const { app, service } = createContext();
+		new DocumentViewModal(app, service).open();
+		const search = document.querySelector<HTMLInputElement>(
+			'input[type="search"]',
+		);
+		if (!search) return;
+
+		search.dispatchEvent(new CompositionEvent('compositionstart'));
+		search.value = 'missing';
+		search.dispatchEvent(new InputEvent('input', { isComposing: true }));
+		expect(document.body.textContent).toContain('Note.md');
+		expect(document.body.textContent).not.toContain(
+			'No documents match this search.',
+		);
+
+		search.dispatchEvent(new CompositionEvent('compositionend'));
+		expect(document.body.textContent).toContain(
+			'No documents match this search.',
+		);
+	});
+
 	it('closes and opens the selected file', () => {
 		const { app, service, openFile } = createContext();
 		const didClose = vi.fn();
@@ -203,6 +225,34 @@ describe('attachment view modal', () => {
 		expect(document.querySelector('.note-steward-confirm')).not.toBeNull();
 		findButton('Cancel')?.click();
 		expect(deleteAttachments).not.toHaveBeenCalled();
+	});
+
+	it('keeps the attachment search mounted during IME composition', () => {
+		const { app, service } = createContext();
+		new AttachmentViewModal(app, service).open();
+		const search = document.querySelector<HTMLInputElement>(
+			'input[type="search"]',
+		);
+		if (!search) return;
+
+		search.dispatchEvent(new CompositionEvent('compositionstart'));
+		search.value = 'missing';
+		search.dispatchEvent(new InputEvent('input', { isComposing: true }));
+		expect(search.isConnected).toBe(true);
+		expect(
+			document.querySelectorAll('.note-steward-attachment-row'),
+		).toHaveLength(2);
+
+		search.dispatchEvent(new CompositionEvent('compositionend'));
+		const committed = document.querySelector<HTMLInputElement>(
+			'input[type="search"]',
+		);
+		expect(search.isConnected).toBe(false);
+		expect(committed?.value).toBe('missing');
+		expect(document.activeElement).toBe(committed);
+		expect(document.body.textContent).toContain(
+			'No attachments match these filters.',
+		);
 	});
 });
 

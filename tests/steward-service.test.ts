@@ -12,7 +12,7 @@ interface Harness {
 	frontmatter: Map<string, Record<string, unknown>>;
 	files: Map<string, TAbstractFile>;
 	addFolder: (path: string) => TFolder;
-	addFile: (path: string, size?: number) => TFile;
+	addFile: (path: string, size?: number, content?: string) => TFile;
 	lastSaved: () => NoteStewardData | null;
 }
 
@@ -26,6 +26,7 @@ function createHarness(
 	root.name = '';
 	files.set('', root);
 	const frontmatter = new Map<string, Record<string, unknown>>();
+	const contents = new Map<string, string>();
 	const resolvedLinks: Record<string, Record<string, number>> = {};
 	let saved: NoteStewardData | null = null;
 
@@ -52,7 +53,7 @@ function createHarness(
 		return folder;
 	};
 
-	const addFile = (path: string, size = 10): TFile => {
+	const addFile = (path: string, size = 10, content = ''): TFile => {
 		const file = new TFile();
 		setFilePath(file, path);
 		file.stat = { ctime: 1, mtime: 1, size };
@@ -65,6 +66,7 @@ function createHarness(
 			parent.children.push(file);
 		}
 		files.set(path, file);
+		contents.set(path, content);
 		return file;
 	};
 
@@ -94,12 +96,15 @@ function createHarness(
 				(file): file is TFolder => file instanceof TFolder,
 			),
 		createFolder: (path: string) => Promise.resolve(addFolder(path)),
+		cachedRead: (file: TFile) =>
+			Promise.resolve(contents.get(file.path) ?? ''),
 		delete: (file: TAbstractFile) => {
 			if (file.parent)
 				file.parent.children = file.parent.children.filter(
 					(child) => child !== file,
 				);
 			files.delete(file.path);
+			contents.delete(file.path);
 			return Promise.resolve();
 		},
 	};
@@ -119,6 +124,8 @@ function createHarness(
 					(child) => child !== file,
 				);
 			files.delete(oldPath);
+			const content = contents.get(oldPath);
+			contents.delete(oldPath);
 			setFilePath(file, newPath);
 			const parentPath = newPath.includes('/')
 				? newPath.slice(0, newPath.lastIndexOf('/'))
@@ -127,6 +134,7 @@ function createHarness(
 			file.parent = parent instanceof TFolder ? parent : null;
 			file.parent?.children.push(file);
 			files.set(newPath, file);
+			if (content !== undefined) contents.set(newPath, content);
 			for (const destinations of Object.values(resolvedLinks)) {
 				const count = destinations[oldPath];
 				if (count === undefined) continue;
@@ -141,6 +149,7 @@ function createHarness(
 					(child) => child !== file,
 				);
 			files.delete(file.path);
+			contents.delete(file.path);
 			return Promise.resolve();
 		},
 	};
@@ -167,6 +176,55 @@ function createHarness(
 }
 
 describe('StewardService integration', () => {
+	it('excludes document metadata JSON while retaining user JSON files', async () => {
+		const harness = createHarness();
+		harness.addFile(
+			'document.json',
+			32,
+			JSON.stringify({ type: 'docx', nodes: [] }),
+		);
+		harness.addFile(
+			'settings.json',
+			24,
+			JSON.stringify({ type: 'settings', nodes: [] }),
+		);
+		harness.addFile('broken.json', 8, '{ invalid');
+
+		await harness.service.rebuildIndex();
+
+		expect(
+			harness.service.getReviewItems().map((item) => item.path),
+		).toEqual(['broken.json', 'settings.json']);
+	});
+
+	it('removes persisted document metadata JSON without a missing-file issue', async () => {
+		const data = createEmptyData();
+		data.attachments.metadata = {
+			id: 'metadata',
+			path: 'document.json',
+			ownerDocumentId: null,
+			ownershipState: 'unclaimed',
+			firstSeenAt: 1,
+			claimBlocked: false,
+		};
+		data.references.metadata = {};
+		const harness = createHarness(data);
+		harness.addFile(
+			'document.json',
+			32,
+			JSON.stringify({ type: 'docx', nodes: [{ id: 'paragraph' }] }),
+		);
+
+		await harness.service.rebuildIndex();
+
+		expect(harness.service.getReviewItems()).toEqual([]);
+		expect(harness.service.persistedData.issues).not.toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ kind: 'missing-file' }),
+			]),
+		);
+	});
+
 	it('claims a singly referenced attachment, writes the UUID, and moves the file', async () => {
 		const harness = createHarness();
 		const note = harness.addFile('Projects/Plan.md');

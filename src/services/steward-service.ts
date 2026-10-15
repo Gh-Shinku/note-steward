@@ -33,11 +33,21 @@ interface DeleteResult {
 	skipped: number;
 }
 
+interface MetadataClassification {
+	mtime: number;
+	size: number;
+	isDocumentMetadata: boolean;
+}
+
 export class StewardService {
 	private data: NoteStewardData;
 	private readonly listeners = new Set<ChangeListener>();
 	private operationQueue: Promise<void> = Promise.resolve();
 	private reconcileTimer: number | null = null;
+	private readonly metadataClassifications = new Map<
+		string,
+		MetadataClassification
+	>();
 
 	constructor(
 		private readonly app: App,
@@ -282,12 +292,21 @@ export class StewardService {
 		const attachments: Record<string, AttachmentRecord> = {};
 		const references: Record<string, Record<string, number>> = {};
 		const newlyClaimed: AttachmentRecord[] = [];
+		const excludedAttachmentIds = new Set<string>();
+		const scannedJsonPaths = new Set<string>();
 
 		for (const file of this.app.vault.getFiles()) {
 			if (file.extension === 'md') continue;
 			const previous = Object.values(previousAttachments).find(
 				(record) => record.path === file.path,
 			);
+			if (file.extension.toLocaleLowerCase() === 'json') {
+				scannedJsonPaths.add(file.path);
+				if (await this.isDocumentMetadata(file)) {
+					if (previous) excludedAttachmentIds.add(previous.id);
+					continue;
+				}
+			}
 			const currentReferences = referencesByPath[file.path] ?? {};
 			const record: AttachmentRecord = previous
 				? { ...previous }
@@ -352,6 +371,7 @@ export class StewardService {
 		}
 
 		for (const previous of Object.values(previousAttachments)) {
+			if (excludedAttachmentIds.has(previous.id)) continue;
 			if (
 				Object.values(attachments).some(
 					(record) => record.id === previous.id,
@@ -364,6 +384,10 @@ export class StewardService {
 				path: previous.path,
 				detail: 'Indexed attachment no longer exists in the vault.',
 			});
+		}
+		for (const path of this.metadataClassifications.keys()) {
+			if (!scannedJsonPaths.has(path))
+				this.metadataClassifications.delete(path);
 		}
 
 		this.data = {
@@ -379,6 +403,32 @@ export class StewardService {
 		const toMove = moveNewClaims ? newlyClaimed : [];
 		for (const record of toMove) await this.moveAttachmentToOwner(record);
 		if (toMove.length > 0) await this.saveAndNotify();
+	}
+
+	private async isDocumentMetadata(file: TFile): Promise<boolean> {
+		const cached = this.metadataClassifications.get(file.path);
+		if (cached?.mtime === file.stat.mtime && cached.size === file.stat.size)
+			return cached.isDocumentMetadata;
+
+		let isDocumentMetadata = false;
+		try {
+			const value: unknown = JSON.parse(
+				await this.app.vault.cachedRead(file),
+			);
+			isDocumentMetadata =
+				typeof value === 'object' &&
+				value !== null &&
+				Reflect.get(value, 'type') === 'docx' &&
+				Array.isArray(Reflect.get(value, 'nodes'));
+		} catch {
+			// Invalid JSON is still a user attachment, not a metadata sidecar.
+		}
+		this.metadataClassifications.set(file.path, {
+			mtime: file.stat.mtime,
+			size: file.stat.size,
+			isDocumentMetadata,
+		});
+		return isDocumentMetadata;
 	}
 
 	private discoverDocuments(

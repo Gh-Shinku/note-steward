@@ -2,6 +2,7 @@ import { App, Modal, setIcon, TFile } from 'obsidian';
 import { filterDocumentTree } from '../core/model';
 import { translations } from '../i18n';
 import { StewardService } from '../services/steward-service';
+import { bindImeAwareSearch } from './search-input';
 
 export class DocumentViewModal extends Modal {
 	private query = '';
@@ -48,8 +49,8 @@ export class DocumentViewModal extends Modal {
 			attr: { 'aria-label': t.searchDocuments },
 		});
 		search.value = this.query;
-		search.addEventListener('input', () => {
-			this.query = search.value;
+		bindImeAwareSearch(search, (query) => {
+			this.query = query;
 			this.renderResults();
 		});
 		this.countEl = controls.createSpan({ cls: 'note-steward-muted' });
