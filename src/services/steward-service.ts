@@ -162,6 +162,7 @@ export class StewardService {
 				if (attachment.ownerDocumentId)
 					await this.moveAttachmentToOwner(attachment);
 			}
+			await this.cleanupEmptyManagedFolders();
 			await this.saveAndNotify();
 		});
 	}
@@ -502,6 +503,7 @@ export class StewardService {
 			delete record.issue;
 			return;
 		}
+		const previousFolder = parentPath(file.path);
 
 		try {
 			await this.ensureFolder(folder);
@@ -521,6 +523,72 @@ export class StewardService {
 				path: record.path,
 				detail: record.issue,
 			});
+			return;
+		}
+
+		if (this.isManagedAttachmentFolder(previousFolder, owner.id)) {
+			await this.removeEmptyManagedFolderSafely(previousFolder);
+		}
+	}
+
+	private isManagedAttachmentFolder(
+		folderPath: string,
+		ownerDocumentId: string,
+	): boolean {
+		const segments = normalizePath(folderPath).split('/');
+		return (
+			segments[segments.length - 1] === ownerDocumentId &&
+			segments[segments.length - 2] === 'assets'
+		);
+	}
+
+	private async cleanupEmptyManagedFolders(): Promise<void> {
+		const documentIds = new Set(Object.keys(this.data.documents));
+		const folders = this.app.vault
+			.getAllFolders(true)
+			.slice()
+			.sort((left, right) => right.path.length - left.path.length);
+		for (const folder of folders) {
+			const segments = normalizePath(folder.path).split('/');
+			const documentId = segments[segments.length - 1];
+			if (
+				documentId &&
+				documentIds.has(documentId) &&
+				this.isManagedAttachmentFolder(folder.path, documentId)
+			) {
+				await this.removeEmptyManagedFolderSafely(folder.path);
+			}
+		}
+	}
+
+	private async removeEmptyManagedFolderSafely(
+		folderPath: string,
+	): Promise<void> {
+		try {
+			await this.removeEmptyManagedFolder(folderPath);
+		} catch (error) {
+			this.data.issues.push({
+				id: createId(),
+				kind: 'cleanup-failed',
+				path: folderPath,
+				detail: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+	private async removeEmptyManagedFolder(folderPath: string): Promise<void> {
+		const folder = this.app.vault.getAbstractFileByPath(folderPath);
+		if (!(folder instanceof TFolder) || folder.children.length > 0) return;
+		await this.app.fileManager.trashFile(folder);
+
+		const assetsPath = parentPath(folderPath);
+		const assetsFolder = this.app.vault.getAbstractFileByPath(assetsPath);
+		if (
+			assetsFolder instanceof TFolder &&
+			assetsFolder.name === 'assets' &&
+			assetsFolder.children.length === 0
+		) {
+			await this.app.fileManager.trashFile(assetsFolder);
 		}
 	}
 

@@ -30,7 +30,11 @@ export interface AttachmentRecord {
 export interface IndexIssue {
 	id: string;
 	kind:
-		'duplicate-document-id' | 'missing-file' | 'path-drift' | 'move-failed';
+		| 'duplicate-document-id'
+		| 'missing-file'
+		| 'path-drift'
+		| 'move-failed'
+		| 'cleanup-failed';
 	path: string;
 	detail: string;
 }

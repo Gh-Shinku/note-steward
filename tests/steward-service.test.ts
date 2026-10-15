@@ -11,6 +11,7 @@ interface Harness {
 	resolvedLinks: Record<string, Record<string, number>>;
 	frontmatter: Map<string, Record<string, unknown>>;
 	files: Map<string, TAbstractFile>;
+	addFolder: (path: string) => TFolder;
 	addFile: (path: string, size?: number) => TFile;
 	lastSaved: () => NoteStewardData | null;
 }
@@ -35,11 +36,34 @@ function createHarness(
 		file.extension = dot >= 0 ? file.name.slice(dot + 1) : '';
 		file.basename = dot >= 0 ? file.name.slice(0, dot) : file.name;
 	};
+	const addFolder = (path: string): TFolder => {
+		const folder = new TFolder();
+		folder.path = path;
+		folder.name = path.split('/').at(-1) ?? path;
+		const parentPath = path.includes('/')
+			? path.slice(0, path.lastIndexOf('/'))
+			: '';
+		const parent = files.get(parentPath);
+		if (parent instanceof TFolder) {
+			folder.parent = parent;
+			parent.children.push(folder);
+		}
+		files.set(path, folder);
+		return folder;
+	};
 
 	const addFile = (path: string, size = 10): TFile => {
 		const file = new TFile();
 		setFilePath(file, path);
 		file.stat = { ctime: 1, mtime: 1, size };
+		const parentPath = path.includes('/')
+			? path.slice(0, path.lastIndexOf('/'))
+			: '';
+		const parent = files.get(parentPath);
+		if (parent instanceof TFolder) {
+			file.parent = parent;
+			parent.children.push(file);
+		}
 		files.set(path, file);
 		return file;
 	};
@@ -69,12 +93,14 @@ function createHarness(
 			[...files.values()].filter(
 				(file): file is TFolder => file instanceof TFolder,
 			),
-		createFolder: (path: string) => {
-			const folder = new TFolder();
-			folder.path = path;
-			folder.name = path.split('/').at(-1) ?? path;
-			files.set(path, folder);
-			return Promise.resolve(folder);
+		createFolder: (path: string) => Promise.resolve(addFolder(path)),
+		delete: (file: TAbstractFile) => {
+			if (file.parent)
+				file.parent.children = file.parent.children.filter(
+					(child) => child !== file,
+				);
+			files.delete(file.path);
+			return Promise.resolve();
 		},
 	};
 	const fileManager = {
@@ -88,8 +114,18 @@ function createHarness(
 			if (options.failRename)
 				return Promise.reject(new Error('Simulated move failure'));
 			const oldPath = file.path;
+			if (file.parent)
+				file.parent.children = file.parent.children.filter(
+					(child) => child !== file,
+				);
 			files.delete(oldPath);
 			setFilePath(file, newPath);
+			const parentPath = newPath.includes('/')
+				? newPath.slice(0, newPath.lastIndexOf('/'))
+				: '';
+			const parent = files.get(parentPath);
+			file.parent = parent instanceof TFolder ? parent : null;
+			file.parent?.children.push(file);
 			files.set(newPath, file);
 			for (const destinations of Object.values(resolvedLinks)) {
 				const count = destinations[oldPath];
@@ -99,7 +135,11 @@ function createHarness(
 			}
 			return Promise.resolve();
 		},
-		trashFile: (file: TFile) => {
+		trashFile: (file: TAbstractFile) => {
+			if (file.parent)
+				file.parent.children = file.parent.children.filter(
+					(child) => child !== file,
+				);
 			files.delete(file.path);
 			return Promise.resolve();
 		},
@@ -120,6 +160,7 @@ function createHarness(
 		resolvedLinks,
 		frontmatter,
 		files,
+		addFolder,
 		addFile,
 		lastSaved: () => saved,
 	};
@@ -292,6 +333,105 @@ describe('StewardService integration', () => {
 		expect(harness.service.getReviewItems()[0]?.ownershipState).toBe(
 			'owned',
 		);
+	});
+
+	it('removes the old managed UUID folder and empty assets parent after migration', async () => {
+		const data = createEmptyData();
+		data.documents['doc-id'] = {
+			id: 'doc-id',
+			path: 'New/Plan.md',
+			exists: true,
+		};
+		data.attachments['asset-id'] = {
+			id: 'asset-id',
+			path: 'Old/assets/doc-id/image.png',
+			ownerDocumentId: 'doc-id',
+			ownershipState: 'owned',
+			firstSeenAt: 1,
+			claimBlocked: false,
+		};
+		data.references['asset-id'] = {};
+		const harness = createHarness(data);
+		harness.addFolder('Old');
+		harness.addFolder('Old/assets');
+		harness.addFolder('Old/assets/doc-id');
+		harness.addFolder('New');
+		const owner = harness.addFile('New/Plan.md');
+		harness.frontmatter.set(owner.path, { 'note-steward-id': 'doc-id' });
+		const attachment = harness.addFile('Old/assets/doc-id/image.png');
+
+		await harness.service.repairIndex();
+
+		expect(attachment.path).toBe('New/assets/doc-id/image.png');
+		expect(harness.files.has('Old/assets/doc-id')).toBe(false);
+		expect(harness.files.has('Old/assets')).toBe(false);
+	});
+
+	it('repair removes empty managed folders left by earlier plugin versions', async () => {
+		const data = createEmptyData();
+		data.documents['doc-id'] = {
+			id: 'doc-id',
+			path: 'Current/Plan.md',
+			exists: true,
+		};
+		data.attachments['asset-id'] = {
+			id: 'asset-id',
+			path: 'Current/assets/doc-id/image.png',
+			ownerDocumentId: 'doc-id',
+			ownershipState: 'owned',
+			firstSeenAt: 1,
+			claimBlocked: false,
+		};
+		data.references['asset-id'] = {};
+		const harness = createHarness(data);
+		harness.addFolder('Current');
+		harness.addFolder('Current/assets');
+		harness.addFolder('Current/assets/doc-id');
+		const owner = harness.addFile('Current/Plan.md');
+		harness.frontmatter.set(owner.path, { 'note-steward-id': 'doc-id' });
+		harness.addFile('Current/assets/doc-id/image.png');
+		harness.addFolder('Legacy');
+		harness.addFolder('Legacy/assets');
+		harness.addFolder('Legacy/assets/doc-id');
+
+		await harness.service.repairIndex();
+
+		expect(harness.files.has('Legacy/assets/doc-id')).toBe(false);
+		expect(harness.files.has('Legacy/assets')).toBe(false);
+		expect(harness.files.has('Current/assets/doc-id/image.png')).toBe(true);
+	});
+
+	it('keeps the old assets parent when it still contains unrelated files', async () => {
+		const data = createEmptyData();
+		data.documents['doc-id'] = {
+			id: 'doc-id',
+			path: 'New/Plan.md',
+			exists: true,
+		};
+		data.attachments['asset-id'] = {
+			id: 'asset-id',
+			path: 'Old/assets/doc-id/image.png',
+			ownerDocumentId: 'doc-id',
+			ownershipState: 'owned',
+			firstSeenAt: 1,
+			claimBlocked: false,
+		};
+		data.references['asset-id'] = {};
+		const harness = createHarness(data);
+		harness.addFolder('Old');
+		harness.addFolder('Old/assets');
+		harness.addFolder('Old/assets/doc-id');
+		harness.addFolder('New');
+		const owner = harness.addFile('New/Plan.md');
+		harness.frontmatter.set(owner.path, { 'note-steward-id': 'doc-id' });
+		harness.addFile('Old/assets/doc-id/image.png');
+		harness.addFile('Old/assets/keep.txt');
+
+		await harness.service.repairIndex();
+
+		expect(harness.files.has('Old/assets/doc-id')).toBe(false);
+		expect(harness.files.has('Old/assets')).toBe(true);
+		expect(harness.files.has('Old/assets/keep.txt')).toBe(true);
 	});
 
 	it('reports duplicate document UUIDs without silently choosing the second note', async () => {
