@@ -7,6 +7,7 @@ import {
 	filterDocumentTree,
 	hydrateData,
 	shouldAutoClaim,
+	shouldClaimDuringRebuild,
 	sumReferenceCounts,
 } from '../src/core/model';
 import {
@@ -78,6 +79,28 @@ describe('ownership decisions', () => {
 		expect(
 			shouldAutoClaim(
 				{ ...attachment, claimBlocked: true },
+				{ 'A.md': 1 },
+			),
+		).toBe(false);
+	});
+
+	it('rebuild claims a blocked unclaimed attachment with one reference', () => {
+		expect(
+			shouldClaimDuringRebuild(
+				{ ...attachment, claimBlocked: true },
+				{ 'A.md': 1 },
+			),
+		).toBe(true);
+	});
+
+	it('rebuild does not claim an attachment referenced twice by one note', () => {
+		expect(shouldClaimDuringRebuild(attachment, { 'A.md': 2 })).toBe(false);
+	});
+
+	it('rebuild only applies the single-reference rule to unclaimed records', () => {
+		expect(
+			shouldClaimDuringRebuild(
+				{ ...attachment, ownershipState: 'needs-repair' },
 				{ 'A.md': 1 },
 			),
 		).toBe(false);

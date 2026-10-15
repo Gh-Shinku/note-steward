@@ -229,7 +229,7 @@ describe('StewardService integration', () => {
 		const harness = createHarness();
 		const note = harness.addFile('Projects/Plan.md');
 		const attachment = harness.addFile('Inbox/image.png', 42);
-		harness.resolvedLinks[note.path] = { [attachment.path]: 2 };
+		harness.resolvedLinks[note.path] = { [attachment.path]: 1 };
 
 		await harness.service.rebuildIndex();
 
@@ -242,7 +242,7 @@ describe('StewardService integration', () => {
 		);
 		const item = harness.service.getReviewItems()[0];
 		expect(item?.ownerPath).toBe(note.path);
-		expect(item?.totalReferences).toBe(2);
+		expect(item?.totalReferences).toBe(1);
 		expect(harness.lastSaved()?.attachments[item?.id ?? '']?.path).toBe(
 			attachment.path,
 		);
@@ -254,6 +254,45 @@ describe('StewardService integration', () => {
 				attachments: [expect.objectContaining({ id: item?.id })],
 			}),
 		]);
+	});
+
+	it('rebuild reconsiders a blocked unclaimed attachment with one reference', async () => {
+		const data = createEmptyData();
+		data.attachments['asset-id'] = {
+			id: 'asset-id',
+			path: 'Inbox/image.png',
+			ownerDocumentId: null,
+			ownershipState: 'unclaimed',
+			firstSeenAt: 1,
+			claimBlocked: true,
+		};
+		data.references['asset-id'] = { 'Old.md': 1, 'Other.md': 1 };
+		const harness = createHarness(data);
+		const note = harness.addFile('Projects/Plan.md');
+		const attachment = harness.addFile('Inbox/image.png');
+		harness.resolvedLinks[note.path] = { [attachment.path]: 1 };
+
+		await harness.service.rebuildIndex();
+
+		const item = harness.service.getReviewItems()[0];
+		expect(item?.ownerPath).toBe(note.path);
+		expect(item?.ownershipState).toBe('owned');
+		expect(item?.totalReferences).toBe(1);
+	});
+
+	it('rebuild leaves an attachment with two references unclaimed', async () => {
+		const harness = createHarness();
+		const note = harness.addFile('Projects/Plan.md');
+		const attachment = harness.addFile('Inbox/image.png');
+		harness.resolvedLinks[note.path] = { [attachment.path]: 2 };
+
+		await harness.service.rebuildIndex();
+
+		const item = harness.service.getReviewItems()[0];
+		expect(item?.ownerDocumentId).toBeNull();
+		expect(item?.ownershipState).toBe('unclaimed');
+		expect(item?.totalReferences).toBe(2);
+		expect(attachment.path).toBe('Inbox/image.png');
 	});
 
 	it('omits documents that own no attachments from the document tree', async () => {
@@ -279,7 +318,7 @@ describe('StewardService integration', () => {
 		expect(harness.service.getDocumentTreeItems()).toEqual([]);
 	});
 
-	it('keeps ambiguous ownership unclaimed even after only one source remains', async () => {
+	it('rebuild claims formerly ambiguous ownership after one reference remains', async () => {
 		const harness = createHarness();
 		const first = harness.addFile('A.md');
 		const second = harness.addFile('B.md');
@@ -294,9 +333,10 @@ describe('StewardService integration', () => {
 
 		delete harness.resolvedLinks[second.path];
 		await harness.service.rebuildIndex();
-		expect(harness.service.getReviewItems()[0]?.ownershipState).toBe(
-			'unclaimed',
-		);
+		const item = harness.service.getReviewItems()[0];
+		expect(item?.ownershipState).toBe('owned');
+		expect(item?.ownerPath).toBe(first.path);
+		expect(item?.totalReferences).toBe(1);
 	});
 
 	it('uses a numeric suffix instead of overwriting a destination collision', async () => {

@@ -51,6 +51,18 @@ export function shouldAutoClaim(
 	);
 }
 
+export function shouldClaimDuringRebuild(
+	record: AttachmentRecord,
+	references: Record<string, number>,
+): boolean {
+	return (
+		!record.ownerDocumentId &&
+		record.ownershipState === 'unclaimed' &&
+		Object.keys(references).length === 1 &&
+		sumReferenceCounts(references) === 1
+	);
+}
+
 export function parentPath(path: string): string {
 	const separator = path.lastIndexOf('/');
 	return separator < 0 ? '' : path.slice(0, separator);

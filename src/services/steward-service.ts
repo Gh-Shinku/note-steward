@@ -12,6 +12,7 @@ import {
 	hydrateData,
 	parentPath,
 	shouldAutoClaim,
+	shouldClaimDuringRebuild,
 	sumReferenceCounts,
 } from '../core/model';
 import {
@@ -191,7 +192,7 @@ export class StewardService {
 
 	async rebuildIndex(): Promise<void> {
 		return this.runExclusive(async () => {
-			await this.scanVault(false);
+			await this.scanVault(false, true);
 			for (const attachment of Object.values(this.data.attachments)) {
 				if (attachment.ownerDocumentId)
 					await this.moveAttachmentToOwner(attachment);
@@ -283,7 +284,10 @@ export class StewardService {
 		return result;
 	}
 
-	private async scanVault(moveNewClaims: boolean): Promise<void> {
+	private async scanVault(
+		moveNewClaims: boolean,
+		rebuildOwnership = false,
+	): Promise<void> {
 		const previousAttachments = this.data.attachments;
 		const previousDocuments = this.data.documents;
 		const issues: IndexIssue[] = [];
@@ -340,7 +344,11 @@ export class StewardService {
 				} else {
 					this.applyPathState(record, owner, issues);
 				}
-			} else if (shouldAutoClaim(record, currentReferences)) {
+			} else if (
+				rebuildOwnership
+					? shouldClaimDuringRebuild(record, currentReferences)
+					: shouldAutoClaim(record, currentReferences)
+			) {
 				const [sourcePath] = Object.keys(currentReferences);
 				const note = sourcePath
 					? this.app.vault.getFileByPath(sourcePath)
