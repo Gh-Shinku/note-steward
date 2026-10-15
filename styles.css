@@ -61,10 +61,6 @@
 	font-size: var(--font-ui-smaller);
 }
 
-.note-steward-tree-group + .note-steward-tree-group {
-	margin-block-start: var(--size-4-1);
-}
-
 .note-steward-document-tree .note-steward-tree-toggle,
 .note-steward-document-tree .note-steward-tree-label,
 .note-steward-modal .note-steward-link-button {
@@ -84,6 +80,12 @@
 	align-items: center;
 	min-height: 2rem;
 	border-radius: var(--radius-s);
+}
+
+.note-steward-document-tree .note-steward-tree-row {
+	flex: 0 0 32px;
+	height: 32px;
+	min-height: 32px;
 }
 
 .note-steward-tree-row:hover {
@@ -139,14 +141,8 @@
 	white-space: nowrap;
 }
 
-.note-steward-tree-children {
-	margin-inline-start: 0.875rem;
-	padding-inline-start: 0.875rem;
-	border-inline-start: 1px solid var(--background-modifier-border);
-}
-
 .note-steward-tree-attachment .note-steward-tree-label {
-	padding-inline-start: var(--size-4-1);
+	padding-inline-start: 2.75rem;
 }
 
 .note-steward-tree-toggle:focus-visible,
@@ -174,17 +170,20 @@
 .note-steward-attachment-list {
 	display: flex;
 	flex-direction: column;
-	gap: var(--size-4-2);
 }
 
 .note-steward-attachment-row {
 	display: grid;
+	flex: 0 0 144px;
 	grid-template-columns: auto minmax(0, 1fr);
 	align-items: start;
 	gap: var(--size-4-3);
+	height: 144px;
+	margin-block-end: 8px;
 	padding: var(--size-4-3);
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-s);
+	box-sizing: border-box;
 }
 
 .note-steward-attachment-row > input[type='checkbox'] {
@@ -193,6 +192,8 @@
 
 .note-steward-attachment-content {
 	min-width: 0;
+	height: 100%;
+	overflow: auto;
 }
 
 .note-steward-attachment-heading {
@@ -236,9 +237,19 @@
 
 .note-steward-reference-list {
 	display: flex;
-	flex-wrap: wrap;
+	flex-wrap: nowrap;
 	gap: var(--size-4-2) var(--size-4-3);
 	margin-block-start: var(--size-4-2);
+	overflow-x: auto;
+}
+
+.note-steward-reference-list .note-steward-link-button {
+	flex: 0 0 auto;
+}
+
+.note-steward-virtual-spacer {
+	flex: 0 0 auto;
+	width: 1px;
 }
 
 .note-steward-empty {

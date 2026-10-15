@@ -134,6 +134,7 @@ describe('document view modal', () => {
 
 	it('defers document filtering until IME composition is committed', () => {
 		const { app, service } = createContext();
+		const getItems = vi.spyOn(service, 'getDocumentTreeItems');
 		new DocumentViewModal(app, service).open();
 		const search = document.querySelector<HTMLInputElement>(
 			'input[type="search"]',
@@ -152,6 +153,7 @@ describe('document view modal', () => {
 		expect(document.body.textContent).toContain(
 			'No documents match this search.',
 		);
+		expect(getItems).toHaveBeenCalledOnce();
 	});
 
 	it('closes and opens the selected file', () => {
@@ -165,6 +167,42 @@ describe('document view modal', () => {
 		expect(openFile).toHaveBeenCalledOnce();
 		expect(didClose).toHaveBeenCalledOnce();
 		expect(document.querySelector('.note-steward-modal')).toBeNull();
+	});
+
+	it('only mounts the visible document tree window', () => {
+		const { app, service } = createContext();
+		const attachments = Array.from({ length: 100 }, (_, index) => ({
+			...orphan,
+			id: `tree-${index}`,
+			path: `assets/tree-${index}.png`,
+			name: `tree-${index}.png`,
+		}));
+		vi.spyOn(service, 'getDocumentTreeItems').mockReturnValue([
+			{
+				documentId: 'doc',
+				path: 'Note.md',
+				name: 'Note.md',
+				attachments,
+			},
+		]);
+
+		new DocumentViewModal(app, service).open();
+
+		expect(
+			document.querySelectorAll('.note-steward-tree-row'),
+		).toHaveLength(15);
+		expect(
+			document.querySelector('.note-steward-virtual-spacer'),
+		).not.toBeNull();
+		const results = document.querySelector<HTMLElement>(
+			'.note-steward-document-tree',
+		);
+		expect(results).not.toBeNull();
+		if (!results) throw new Error('Document tree was not rendered.');
+		results.scrollTop = 1_000;
+		results.dispatchEvent(new Event('scroll'));
+		expect(results.scrollTop).toBe(1_000);
+		expect(document.body.textContent).toContain('tree-26.png');
 	});
 });
 
@@ -229,6 +267,7 @@ describe('attachment view modal', () => {
 
 	it('keeps the attachment search mounted during IME composition', () => {
 		const { app, service } = createContext();
+		const getItems = vi.spyOn(service, 'getReviewItems');
 		new AttachmentViewModal(app, service).open();
 		const search = document.querySelector<HTMLInputElement>(
 			'input[type="search"]',
@@ -247,12 +286,43 @@ describe('attachment view modal', () => {
 		const committed = document.querySelector<HTMLInputElement>(
 			'input[type="search"]',
 		);
-		expect(search.isConnected).toBe(false);
+		expect(search.isConnected).toBe(true);
+		expect(committed).toBe(search);
 		expect(committed?.value).toBe('missing');
 		expect(document.activeElement).toBe(committed);
 		expect(document.body.textContent).toContain(
 			'No attachments match these filters.',
 		);
+		expect(getItems).toHaveBeenCalledOnce();
+	});
+
+	it('only mounts the visible attachment window', () => {
+		const { app, service } = createContext();
+		const many = Array.from({ length: 100 }, (_, index) => ({
+			...orphan,
+			id: `item-${index}`,
+			path: `assets/item-${index}.png`,
+			name: `item-${index}.png`,
+		}));
+		vi.spyOn(service, 'getReviewItems').mockReturnValue(many);
+
+		new AttachmentViewModal(app, service).open();
+
+		expect(
+			document.querySelectorAll('.note-steward-attachment-row'),
+		).toHaveLength(15);
+		expect(
+			document.querySelector('.note-steward-virtual-spacer'),
+		).not.toBeNull();
+		const results = document.querySelector<HTMLElement>(
+			'.note-steward-attachment-list',
+		);
+		expect(results).not.toBeNull();
+		if (!results) throw new Error('Attachment list was not rendered.');
+		results.scrollTop = 4_000;
+		results.dispatchEvent(new Event('scroll'));
+		expect(results.scrollTop).toBe(4_000);
+		expect(document.body.textContent).toContain('item-28.png');
 	});
 });
 

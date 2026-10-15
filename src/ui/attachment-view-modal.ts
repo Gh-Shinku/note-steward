@@ -11,7 +11,9 @@ import {
 } from '../types';
 import { ConfirmDeleteModal, formatBytes } from './confirm-delete-modal';
 import { bindImeAwareSearch } from './search-input';
+import { getVirtualRange } from './virtual-list';
 
+const ATTACHMENT_ROW_HEIGHT = 152;
 const DEFAULT_FILTER: AttachmentViewFilter = {
 	query: '',
 	reference: 'all',
@@ -24,6 +26,11 @@ export class AttachmentViewModal extends Modal {
 	private filter: AttachmentViewFilter = { ...DEFAULT_FILTER };
 	private readonly selected = new Set<string>();
 	private unsubscribe: (() => void) | null = null;
+	private selectionEl: HTMLElement | null = null;
+	private resultsEl: HTMLElement | null = null;
+	private typeFilterEl: HTMLSelectElement | null = null;
+	private allItems: ReviewItem[] = [];
+	private filteredItems: ReviewItem[] = [];
 
 	constructor(
 		app: App,
@@ -38,67 +45,70 @@ export class AttachmentViewModal extends Modal {
 		this.selected.clear();
 		this.modalEl.addClass('note-steward-modal');
 		this.contentEl.addClass('note-steward-attachment-view');
-		this.unsubscribe = this.service.onChange(() => this.render());
-		this.render();
+		this.unsubscribe = this.service.onChange(() => this.updateData(false));
+		this.renderShell();
 	}
 
 	onClose(): void {
 		this.unsubscribe?.();
 		this.unsubscribe = null;
+		this.typeFilterEl = null;
 		this.contentEl.empty();
 		this.didClose();
 	}
 
-	private render(): void {
+	private renderShell(): void {
 		const t = translations(this.service.persistedData.settings.locale);
-		const allItems = this.service.getReviewItems();
+		this.setTitle(t.attachmentViewTitle);
+		this.contentEl.empty();
+		this.allItems = this.service.getReviewItems();
+		const controls = this.contentEl.createDiv({
+			cls: 'note-steward-modal-controls note-steward-attachment-controls',
+		});
+		this.renderFilters(controls, t);
+		this.selectionEl = this.contentEl.createDiv();
+		this.resultsEl = this.contentEl.createDiv({
+			cls: 'note-steward-modal-results note-steward-attachment-list',
+		});
+		this.resultsEl.addEventListener('scroll', () => this.renderResults());
+		this.updateData(true, false);
+		controls
+			.querySelector<HTMLInputElement>('input[type="search"]')
+			?.focus();
+	}
+
+	private updateData(resetScroll = false, refreshItems = true): void {
+		if (refreshItems) {
+			this.allItems = this.service.getReviewItems();
+			this.refreshFileTypes();
+		}
 		const validIds = new Set(
-			allItems
+			this.allItems
 				.filter((item) => item.totalReferences === 0)
 				.map((item) => item.id),
 		);
 		for (const id of this.selected) {
 			if (!validIds.has(id)) this.selected.delete(id);
 		}
-
-		this.setTitle(t.attachmentViewTitle);
-		this.contentEl.empty();
-		const controls = this.contentEl.createDiv({
-			cls: 'note-steward-modal-controls note-steward-attachment-controls',
-		});
-		this.renderFilters(controls, allItems, t);
-
-		const items = filterAndSortAttachments(allItems, this.filter);
-		this.renderSelectionBar(this.contentEl, items, allItems, t);
-		const results = this.contentEl.createDiv({
-			cls: 'note-steward-modal-results note-steward-attachment-list',
-		});
-		if (items.length === 0) {
-			results.createDiv({
-				cls: 'note-steward-empty',
-				text: t.noAttachments,
-			});
-			return;
-		}
-		for (const item of items) this.renderItem(results, item, t);
+		this.filteredItems = filterAndSortAttachments(
+			this.allItems,
+			this.filter,
+		);
+		if (resetScroll && this.resultsEl) this.resultsEl.scrollTop = 0;
+		this.renderSelectionBar();
+		this.renderResults();
 	}
 
-	private renderFilters(
-		container: HTMLElement,
-		allItems: ReviewItem[],
-		t: Translation,
-	): void {
+	private renderFilters(container: HTMLElement, t: Translation): void {
 		const search = container.createEl('input', {
 			type: 'search',
 			placeholder: t.searchAttachments,
 			attr: { 'aria-label': t.searchAttachments },
 		});
-		search.value = this.filter.query;
 		bindImeAwareSearch(search, (query) => {
 			this.filter.query = query;
 			this.selected.clear();
-			this.render();
-			this.focusSearch();
+			this.updateData(true, false);
 		});
 
 		const reference = container.createEl('select', {
@@ -111,11 +121,10 @@ export class AttachmentViewModal extends Modal {
 			['shared', t.shared],
 		];
 		for (const option of referenceOptions) addOption(reference, ...option);
-		reference.value = this.filter.reference;
 		reference.addEventListener('change', () => {
 			this.filter.reference = reference.value as ReferenceFilter;
 			this.selected.clear();
-			this.render();
+			this.updateData(true, false);
 		});
 
 		const ownership = container.createEl('select', {
@@ -129,27 +138,21 @@ export class AttachmentViewModal extends Modal {
 			['needs-repair', t.needsRepair],
 		];
 		for (const option of ownershipOptions) addOption(ownership, ...option);
-		ownership.value = this.filter.ownership;
 		ownership.addEventListener('change', () => {
 			this.filter.ownership = ownership.value as OwnershipFilter;
 			this.selected.clear();
-			this.render();
+			this.updateData(true, false);
 		});
 
 		const type = container.createEl('select', {
 			attr: { 'aria-label': t.fileType },
 		});
-		addOption(type, '', t.all);
-		for (const extension of [
-			...new Set(allItems.map((item) => item.extension)),
-		].sort()) {
-			addOption(type, extension, extension.toLocaleUpperCase());
-		}
-		type.value = this.filter.extension;
+		this.typeFilterEl = type;
+		this.refreshFileTypes();
 		type.addEventListener('change', () => {
 			this.filter.extension = type.value;
 			this.selected.clear();
-			this.render();
+			this.updateData(true, false);
 		});
 
 		const sort = container.createEl('select', {
@@ -162,23 +165,47 @@ export class AttachmentViewModal extends Modal {
 			['path-asc', t.sortPathAscending],
 		];
 		for (const option of sortOptions) addOption(sort, ...option);
-		sort.value = this.filter.sort;
 		sort.addEventListener('change', () => {
 			this.filter.sort = sort.value as AttachmentSort;
-			this.render();
+			this.updateData(true, false);
 		});
 	}
 
-	private renderSelectionBar(
-		container: HTMLElement,
-		items: ReviewItem[],
-		allItems: ReviewItem[],
-		t: Translation,
-	): void {
-		const bar = container.createDiv({ cls: 'note-steward-selection-bar' });
+	private refreshFileTypes(): void {
+		if (!this.typeFilterEl) return;
+		const t = translations(this.service.persistedData.settings.locale);
+		const extensions = [
+			...new Set(this.allItems.map((item) => item.extension)),
+		].sort();
+		if (
+			this.filter.extension &&
+			!extensions.includes(this.filter.extension)
+		) {
+			this.filter.extension = '';
+			this.selected.clear();
+		}
+		this.typeFilterEl.empty();
+		addOption(this.typeFilterEl, '', t.all);
+		for (const extension of extensions) {
+			addOption(
+				this.typeFilterEl,
+				extension,
+				extension.toLocaleUpperCase(),
+			);
+		}
+		this.typeFilterEl.value = this.filter.extension;
+	}
+
+	private renderSelectionBar(): void {
+		if (!this.selectionEl) return;
+		const t = translations(this.service.persistedData.settings.locale);
+		this.selectionEl.empty();
+		const bar = this.selectionEl.createDiv({
+			cls: 'note-steward-selection-bar',
+		});
 		bar.createSpan({
 			cls: 'note-steward-muted',
-			text: `${t.attachmentCount(items.length)} · ${t.selected(this.selected.size)}`,
+			text: `${t.attachmentCount(this.filteredItems.length)} · ${t.selected(this.selected.size)}`,
 		});
 		const actions = bar.createDiv({
 			cls: 'note-steward-selection-actions',
@@ -186,20 +213,22 @@ export class AttachmentViewModal extends Modal {
 		const selectVisible = actions.createEl('button', {
 			text: t.selectVisible,
 		});
-		selectVisible.disabled = !items.some(
+		selectVisible.disabled = !this.filteredItems.some(
 			(item) => item.totalReferences === 0,
 		);
 		selectVisible.addEventListener('click', () => {
-			for (const item of items) {
+			for (const item of this.filteredItems) {
 				if (item.totalReferences === 0) this.selected.add(item.id);
 			}
-			this.render();
+			this.renderSelectionBar();
+			this.renderResults();
 		});
 		const clear = actions.createEl('button', { text: t.clearSelection });
 		clear.disabled = this.selected.size === 0;
 		clear.addEventListener('click', () => {
 			this.selected.clear();
-			this.render();
+			this.renderSelectionBar();
+			this.renderResults();
 		});
 		const remove = actions.createEl('button', {
 			text: t.deleteSelected,
@@ -207,11 +236,45 @@ export class AttachmentViewModal extends Modal {
 		});
 		remove.disabled = this.selected.size === 0;
 		remove.addEventListener('click', () => {
-			const selectedItems = allItems.filter((item) =>
-				this.selected.has(item.id),
+			this.confirmDeletion(
+				this.allItems.filter((item) => this.selected.has(item.id)),
+				t,
 			);
-			this.confirmDeletion(selectedItems, t);
 		});
+	}
+
+	private renderResults(): void {
+		if (!this.resultsEl) return;
+		const t = translations(this.service.persistedData.settings.locale);
+		if (this.filteredItems.length === 0) {
+			this.resultsEl.empty();
+			this.resultsEl.createDiv({
+				cls: 'note-steward-empty',
+				text: t.noAttachments,
+			});
+			return;
+		}
+		const scrollTop = this.resultsEl.scrollTop;
+		const range = getVirtualRange(
+			this.filteredItems.length,
+			scrollTop,
+			this.resultsEl.clientHeight,
+			ATTACHMENT_ROW_HEIGHT,
+		);
+		this.resultsEl.empty();
+		this.createSpacer(this.resultsEl, range.paddingBefore);
+		for (const item of this.filteredItems.slice(range.start, range.end))
+			this.renderItem(this.resultsEl, item, t);
+		this.createSpacer(this.resultsEl, range.paddingAfter);
+		this.resultsEl.scrollTop = scrollTop;
+	}
+
+	private createSpacer(container: HTMLElement, height: number): void {
+		if (height <= 0) return;
+		const spacer = container.createDiv({
+			cls: 'note-steward-virtual-spacer',
+		});
+		spacer.style.height = `${height}px`;
 	}
 
 	private renderItem(
@@ -229,7 +292,7 @@ export class AttachmentViewModal extends Modal {
 		checkbox.addEventListener('change', () => {
 			if (checkbox.checked) this.selected.add(item.id);
 			else this.selected.delete(item.id);
-			this.render();
+			this.renderSelectionBar();
 		});
 
 		const content = row.createDiv({
@@ -301,15 +364,6 @@ export class AttachmentViewModal extends Modal {
 		if (!(file instanceof TFile)) return;
 		this.close();
 		void this.app.workspace.getLeaf(false).openFile(file);
-	}
-
-	private focusSearch(): void {
-		const input = this.contentEl.querySelector<HTMLInputElement>(
-			'input[type="search"]',
-		);
-		if (!input) return;
-		input.focus();
-		input.setSelectionRange(input.value.length, input.value.length);
 	}
 }
 
