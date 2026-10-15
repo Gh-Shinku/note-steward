@@ -53,16 +53,6 @@ export default class NoteStewardPlugin extends Plugin {
 				),
 		});
 		this.addCommand({
-			id: 'repair-index',
-			name: t.repairIndex,
-			callback: () => {
-				void this.service
-					.repairIndex()
-					.then(() => new Notice(t.repairDone))
-					.catch((error: unknown) => this.reportError(error));
-			},
-		});
-		this.addCommand({
 			id: 'rebuild-index',
 			name: t.rebuildIndex,
 			callback: () => {

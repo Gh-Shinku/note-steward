@@ -333,7 +333,7 @@ describe('StewardService integration', () => {
 		expect(item?.ownershipState).toBe('owner-missing');
 	});
 
-	it('detects path drift and repair moves the attachment back to its owner', async () => {
+	it('rebuild moves a drifted attachment back to its owner', async () => {
 		const data = createEmptyData();
 		data.documents['doc-id'] = {
 			id: 'doc-id',
@@ -355,11 +355,6 @@ describe('StewardService integration', () => {
 		const attachment = harness.addFile('Elsewhere/image.png');
 
 		await harness.service.rebuildIndex();
-		expect(harness.service.getReviewItems()[0]?.ownershipState).toBe(
-			'needs-repair',
-		);
-
-		await harness.service.repairIndex();
 		expect(attachment.path).toBe('Projects/assets/doc-id/image.png');
 		expect(harness.service.getReviewItems()[0]?.ownershipState).toBe(
 			'owned',
@@ -391,14 +386,14 @@ describe('StewardService integration', () => {
 		harness.frontmatter.set(owner.path, { 'note-steward-id': 'doc-id' });
 		const attachment = harness.addFile('Old/assets/doc-id/image.png');
 
-		await harness.service.repairIndex();
+		await harness.service.rebuildIndex();
 
 		expect(attachment.path).toBe('New/assets/doc-id/image.png');
 		expect(harness.files.has('Old/assets/doc-id')).toBe(false);
 		expect(harness.files.has('Old/assets')).toBe(false);
 	});
 
-	it('repair removes empty managed folders left by earlier plugin versions', async () => {
+	it('rebuild removes empty managed folders left by earlier plugin versions', async () => {
 		const data = createEmptyData();
 		data.documents['doc-id'] = {
 			id: 'doc-id',
@@ -425,7 +420,7 @@ describe('StewardService integration', () => {
 		harness.addFolder('Legacy/assets');
 		harness.addFolder('Legacy/assets/doc-id');
 
-		await harness.service.repairIndex();
+		await harness.service.rebuildIndex();
 
 		expect(harness.files.has('Legacy/assets/doc-id')).toBe(false);
 		expect(harness.files.has('Legacy/assets')).toBe(false);
@@ -458,7 +453,7 @@ describe('StewardService integration', () => {
 		harness.addFile('Old/assets/doc-id/image.png');
 		harness.addFile('Old/assets/keep.txt');
 
-		await harness.service.repairIndex();
+		await harness.service.rebuildIndex();
 
 		expect(harness.files.has('Old/assets/doc-id')).toBe(false);
 		expect(harness.files.has('Old/assets')).toBe(true);

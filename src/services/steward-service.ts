@@ -81,7 +81,7 @@ export class StewardService {
 				window.clearTimeout(this.reconcileTimer);
 		});
 		this.app.workspace.onLayoutReady(() => {
-			this.enqueue(async () => this.scanVault(true, false));
+			this.enqueue(async () => this.scanVault(true));
 		});
 	}
 
@@ -180,12 +180,8 @@ export class StewardService {
 	}
 
 	async rebuildIndex(): Promise<void> {
-		return this.runExclusive(async () => this.scanVault(true, false));
-	}
-
-	async repairIndex(): Promise<void> {
 		return this.runExclusive(async () => {
-			await this.scanVault(false, false);
+			await this.scanVault(false);
 			for (const attachment of Object.values(this.data.attachments)) {
 				if (attachment.ownerDocumentId)
 					await this.moveAttachmentToOwner(attachment);
@@ -224,7 +220,7 @@ export class StewardService {
 					{ ...(this.data.references[id] ?? {}) },
 				]),
 			);
-			await this.scanVault(false, false);
+			await this.scanVault(false);
 			let deleted = 0;
 			let skipped = 0;
 			for (const id of attachmentIds) {
@@ -258,7 +254,7 @@ export class StewardService {
 			window.clearTimeout(this.reconcileTimer);
 		this.reconcileTimer = window.setTimeout(() => {
 			this.reconcileTimer = null;
-			this.enqueue(async () => this.scanVault(false, false));
+			this.enqueue(async () => this.scanVault(false));
 		}, 750);
 	}
 
@@ -277,10 +273,7 @@ export class StewardService {
 		return result;
 	}
 
-	private async scanVault(
-		moveNewClaims: boolean,
-		moveAllOwned: boolean,
-	): Promise<void> {
+	private async scanVault(moveNewClaims: boolean): Promise<void> {
 		const previousAttachments = this.data.attachments;
 		const previousDocuments = this.data.documents;
 		const issues: IndexIssue[] = [];
@@ -383,13 +376,7 @@ export class StewardService {
 		};
 		await this.saveAndNotify();
 
-		const toMove = moveAllOwned
-			? Object.values(attachments).filter(
-					(record) => record.ownerDocumentId,
-				)
-			: moveNewClaims
-				? newlyClaimed
-				: [];
+		const toMove = moveNewClaims ? newlyClaimed : [];
 		for (const record of toMove) await this.moveAttachmentToOwner(record);
 		if (toMove.length > 0) await this.saveAndNotify();
 	}

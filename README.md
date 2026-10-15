@@ -13,7 +13,7 @@ Note Steward 是一个本地优先的 Obsidian 插件。它为附件记录稳定
 - Tree-style document ownership view / 树型文档所有权视图
 - Attachment reference view with search, filters, and sorting / 带搜索、筛选与排序的附件引用视图
 - Confirmed, trash-based single and bulk cleanup / 带确认且进入回收站的单个和批量清理
-- Full repair and rebuild commands / 索引修复与重建
+- Full index rebuild, attachment relocation, and folder cleanup / 完整重建索引、归位附件并清理目录
 - English and Simplified Chinese UI / 英文与简体中文界面
 
 The plugin runs entirely inside the vault. It makes no network requests, collects no telemetry, and uses Obsidian's configured trash behavior for deletion.
@@ -24,7 +24,6 @@ The plugin runs entirely inside the vault. It makes no network requests, collect
 
 - Open document view / 打开文档视图
 - Open attachment view / 打开附件视图
-- Repair attachment index / 修复附件索引
 - Rebuild attachment index / 重建附件索引
 
 ## Development / 开发
