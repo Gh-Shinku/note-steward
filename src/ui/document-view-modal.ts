@@ -1,4 +1,4 @@
-import { App, Modal, TFile } from 'obsidian';
+import { App, Modal, setIcon, TFile } from 'obsidian';
 import { filterDocumentTree } from '../core/model';
 import { translations } from '../i18n';
 import { StewardService } from '../services/steward-service';
@@ -8,6 +8,7 @@ export class DocumentViewModal extends Modal {
 	private unsubscribe: (() => void) | null = null;
 	private resultsEl: HTMLElement | null = null;
 	private countEl: HTMLElement | null = null;
+	private readonly collapsedDocuments = new Set<string>();
 
 	constructor(
 		app: App,
@@ -19,6 +20,7 @@ export class DocumentViewModal extends Modal {
 
 	onOpen(): void {
 		this.query = '';
+		this.collapsedDocuments.clear();
 		this.modalEl.addClass('note-steward-modal');
 		this.contentEl.addClass('note-steward-document-view');
 		this.unsubscribe = this.service.onChange(() => this.renderResults());
@@ -54,6 +56,7 @@ export class DocumentViewModal extends Modal {
 		this.resultsEl = this.contentEl.createDiv({
 			cls: 'note-steward-modal-results note-steward-document-tree',
 		});
+		this.resultsEl.setAttribute('role', 'tree');
 		this.renderResults();
 		search.focus();
 	}
@@ -76,36 +79,86 @@ export class DocumentViewModal extends Modal {
 		}
 
 		for (const document of documents) {
+			const expanded =
+				Boolean(this.query.trim()) ||
+				!this.collapsedDocuments.has(document.documentId);
 			const group = this.resultsEl.createDiv({
 				cls: 'note-steward-tree-group',
 			});
-			const documentButton = group.createEl('button', {
-				cls: 'note-steward-tree-document',
-				text: document.path,
+			group.setAttribute('role', 'treeitem');
+			group.setAttribute('aria-expanded', String(expanded));
+
+			const documentRow = group.createDiv({
+				cls: 'note-steward-tree-row note-steward-tree-document-row',
 			});
+			const toggle = documentRow.createEl('button', {
+				cls: 'note-steward-tree-toggle',
+				attr: {
+					'aria-label': expanded ? t.collapse : t.expand,
+					title: expanded ? t.collapse : t.expand,
+				},
+			});
+			setIcon(toggle, expanded ? 'chevron-down' : 'chevron-right');
+			toggle.addEventListener('click', () => {
+				if (expanded) this.collapsedDocuments.add(document.documentId);
+				else this.collapsedDocuments.delete(document.documentId);
+				this.renderResults();
+			});
+
+			const documentButton = this.createTreeLabel(
+				documentRow,
+				'document',
+				document.path,
+				document.path,
+			);
 			documentButton.addEventListener('click', () =>
 				this.openFile(document.path),
 			);
-			document.attachments.forEach((attachment, index) => {
-				const row = group.createDiv({
-					cls: 'note-steward-tree-attachment',
+
+			if (!expanded) continue;
+			const children = group.createDiv({
+				cls: 'note-steward-tree-children',
+			});
+			children.setAttribute('role', 'group');
+			for (const attachment of document.attachments) {
+				const row = children.createDiv({
+					cls: 'note-steward-tree-row note-steward-tree-attachment',
 				});
-				row.createSpan({
-					cls: 'note-steward-tree-branch',
-					text:
-						index === document.attachments.length - 1
-							? '└──'
-							: '├──',
-				});
-				const attachmentButton = row.createEl('button', {
-					text: attachment.name,
-					attr: { title: attachment.path },
-				});
+				row.setAttribute('role', 'treeitem');
+				const attachmentButton = this.createTreeLabel(
+					row,
+					'attachment',
+					attachment.name,
+					attachment.path,
+				);
 				attachmentButton.addEventListener('click', () =>
 					this.openFile(attachment.path),
 				);
-			});
+			}
 		}
+	}
+
+	private createTreeLabel(
+		container: HTMLElement,
+		kind: 'document' | 'attachment',
+		text: string,
+		title: string,
+	): HTMLButtonElement {
+		const kindClass =
+			kind === 'document'
+				? 'note-steward-tree-document'
+				: 'note-steward-tree-attachment-label';
+		const button = container.createEl('button', {
+			cls: `note-steward-tree-label ${kindClass}`,
+			attr: { title },
+		});
+		const icon = button.createSpan({ cls: 'note-steward-tree-item-icon' });
+		setIcon(icon, kind === 'document' ? 'file-text' : 'file');
+		button.createSpan({
+			cls: 'note-steward-tree-label-text',
+			text,
+		});
+		return button;
 	}
 
 	private openFile(path: string): void {

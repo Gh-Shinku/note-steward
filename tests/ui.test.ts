@@ -76,7 +76,7 @@ function createContext() {
 }
 
 describe('document view modal', () => {
-	it('renders a searchable text tree without media previews', () => {
+	it('renders an expanded icon tree without ASCII branches or previews', () => {
 		const { app, service } = createContext();
 		new DocumentViewModal(app, service).open();
 
@@ -85,7 +85,15 @@ describe('document view modal', () => {
 		);
 		expect(
 			document.querySelector('.note-steward-document-tree')?.textContent,
-		).toContain('Note.md└──image.png');
+		).toContain('Note.mdimage.png');
+		expect(document.body.textContent).not.toContain('└──');
+		expect(
+			document.querySelector('[data-icon="chevron-down"]'),
+		).not.toBeNull();
+		expect(
+			document.querySelector('[data-icon="file-text"]'),
+		).not.toBeNull();
+		expect(document.querySelector('[data-icon="file"]')).not.toBeNull();
 		expect(document.querySelector('img, audio, video, iframe')).toBeNull();
 
 		const search = document.querySelector<HTMLInputElement>(
@@ -98,6 +106,30 @@ describe('document view modal', () => {
 		expect(document.body.textContent).toContain(
 			'No documents match this search.',
 		);
+	});
+
+	it('collapses documents and expands matches while searching', () => {
+		const { app, service } = createContext();
+		new DocumentViewModal(app, service).open();
+		const toggle = document.querySelector<HTMLButtonElement>(
+			'.note-steward-tree-toggle',
+		);
+		toggle?.click();
+		expect(
+			document.querySelector('.note-steward-tree-children'),
+		).toBeNull();
+		expect(
+			document.querySelector('[aria-expanded="false"]'),
+		).not.toBeNull();
+
+		const search = document.querySelector<HTMLInputElement>(
+			'input[type="search"]',
+		);
+		if (!search) return;
+		search.value = 'image';
+		search.dispatchEvent(new Event('input'));
+		expect(document.body.textContent).toContain('image.png');
+		expect(document.querySelector('[aria-expanded="true"]')).not.toBeNull();
 	});
 
 	it('closes and opens the selected file', () => {

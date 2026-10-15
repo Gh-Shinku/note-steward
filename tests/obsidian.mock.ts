@@ -85,6 +85,10 @@ export const moment = {
 	locale: (): string => 'en',
 };
 
+export function setIcon(parent: HTMLElement, iconId: string): void {
+	parent.dataset.icon = iconId;
+}
+
 function createNativeElement<K extends keyof HTMLElementTagNameMap>(
 	tag: K,
 ): HTMLElementTagNameMap[K] {
