@@ -14,6 +14,7 @@ type TreeRow =
 
 export class DocumentViewModal extends Modal {
 	private query = '';
+	private initialDocumentPath: string | null = null;
 	private unsubscribe: (() => void) | null = null;
 	private resultsEl: HTMLElement | null = null;
 	private countEl: HTMLElement | null = null;
@@ -30,7 +31,10 @@ export class DocumentViewModal extends Modal {
 	}
 
 	onOpen(): void {
-		this.query = '';
+		const activeFile = this.app.workspace.getActiveFile();
+		this.initialDocumentPath =
+			activeFile?.extension === 'md' ? activeFile.path : null;
+		this.query = this.initialDocumentPath ?? '';
 		this.collapsedDocuments.clear();
 		this.modalEl.addClass('note-steward-modal');
 		this.contentEl.addClass('note-steward-document-view');
@@ -59,7 +63,9 @@ export class DocumentViewModal extends Modal {
 			placeholder: t.searchDocuments,
 			attr: { 'aria-label': t.searchDocuments },
 		});
+		search.value = this.query;
 		bindImeAwareSearch(search, (query) => {
+			this.initialDocumentPath = null;
 			this.query = query;
 			this.refreshRows(true, false);
 		});
@@ -77,7 +83,11 @@ export class DocumentViewModal extends Modal {
 		if (!this.resultsEl || !this.countEl) return;
 		const t = translations(this.service.persistedData.settings.locale);
 		if (refreshItems) this.documents = this.service.getDocumentTreeItems();
-		const documents = filterDocumentTree(this.documents, this.query);
+		const documents = this.initialDocumentPath
+			? this.documents.filter(
+					(document) => document.path === this.initialDocumentPath,
+				)
+			: filterDocumentTree(this.documents, this.query);
 		this.countEl.setText(t.documentCount(documents.length));
 		this.rows = [];
 		for (const document of documents) {

@@ -41,12 +41,20 @@ const shared: ReviewItem = {
 	],
 };
 
-function createContext() {
+function createContext(activePath: string | null = null) {
 	const files = new Map<string, TFile>();
-	for (const path of ['Note.md', orphan.path, shared.path, 'A.md', 'B.md']) {
+	for (const path of [
+		'Note.md',
+		orphan.path,
+		shared.path,
+		'A.md',
+		'B.md',
+		...(activePath ? [activePath] : []),
+	]) {
 		const file = new TFile();
 		file.path = path;
 		file.name = path.split('/').pop() ?? path;
+		file.extension = file.name.split('.').pop() ?? '';
 		files.set(path, file);
 	}
 	const openFile = vi.fn(() => Promise.resolve());
@@ -70,12 +78,72 @@ function createContext() {
 		deleteAttachments,
 	} as unknown as StewardService;
 	const app = {
-		workspace: { getLeaf: () => ({ openFile }) },
+		workspace: {
+			getActiveFile: () =>
+				activePath ? (files.get(activePath) ?? null) : null,
+			getLeaf: () => ({ openFile }),
+		},
 	} as unknown as App;
 	return { app, service, openFile, deleteAttachments };
 }
 
 describe('document view modal', () => {
+	it('initially searches for the exact active Markdown document', () => {
+		const { app, service } = createContext('Note.md');
+		vi.spyOn(service, 'getDocumentTreeItems').mockReturnValue([
+			{
+				documentId: 'doc',
+				path: 'Note.md',
+				name: 'Note.md',
+				attachments: [orphan],
+			},
+			{
+				documentId: 'archive-doc',
+				path: 'Archive/Note.md',
+				name: 'Note.md',
+				attachments: [
+					{
+						...orphan,
+						id: 'archive-attachment',
+						path: 'Archive/assets/image.png',
+					},
+				],
+			},
+		]);
+
+		new DocumentViewModal(app, service).open();
+
+		const search = document.querySelector<HTMLInputElement>(
+			'input[type="search"]',
+		);
+		expect(search?.value).toBe('Note.md');
+		expect(
+			document.querySelectorAll('.note-steward-tree-document-row'),
+		).toHaveLength(1);
+		expect(document.body.textContent).not.toContain('Archive/Note.md');
+
+		if (!search) throw new Error('Document search was not rendered.');
+		search.value = 'Archive/Note.md';
+		search.dispatchEvent(new Event('input'));
+		expect(
+			Array.from(
+				document.querySelectorAll('.note-steward-tree-document'),
+			).map((element) => element.textContent),
+		).toEqual(['Archive/Note.md']);
+	});
+
+	it('starts with an empty search when the active file is not Markdown', () => {
+		const { app, service } = createContext(shared.path);
+
+		new DocumentViewModal(app, service).open();
+
+		expect(
+			document.querySelector<HTMLInputElement>('input[type="search"]')
+				?.value,
+		).toBe('');
+		expect(document.body.textContent).toContain('Note.md');
+	});
+
 	it('renders an expanded icon tree without ASCII branches or previews', () => {
 		const { app, service } = createContext();
 		new DocumentViewModal(app, service).open();
