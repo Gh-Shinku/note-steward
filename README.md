@@ -1,41 +1,60 @@
 # Note Steward
 
-Note Steward is a local-first Obsidian plugin that gives every attachment a persistent owner note, tracks every reference, moves owned attachments with their note, and provides focused document and attachment overlays for review and cleanup.
+Note Steward is a local-first Obsidian plugin for managing attachment ownership. It gives attachments a persistent owner note, tracks every reference, moves owned attachments with their owner, and provides focused document and attachment views for review and cleanup.
 
-Note Steward 是一个本地优先的 Obsidian 插件。它为附件记录稳定的 owner 文档、追踪全部引用、在 owner 文档移动时同步迁移附件，并提供安全的附件 Review 与清理界面。
+The plugin works on desktop and mobile, makes no network requests, and collects no telemetry.
 
-## Features / 功能
+## Features
 
-- Persistent ownership independent of the current folder layout / 不依赖当前目录结构的持久化所有权
-- Attachment buckets at `<note folder>/assets/<note-steward-id>/` / 基于文档 UUID 的附件目录
-- Shared-reference tracking with per-note occurrence counts / 共享附件及逐文档引用次数
-- Owner-aware moves with automatic link updates / owner 移动时自动迁移并更新链接
-- Tree-style document ownership view / 树型文档所有权视图
-- Attachment reference view with search, filters, and sorting / 带搜索、筛选与排序的附件引用视图
-- Confirmed, trash-based single and bulk cleanup / 带确认且进入回收站的单个和批量清理
-- Full index rebuild, attachment relocation, and folder cleanup / 完整重建索引、归位附件并清理目录
-- English and Simplified Chinese UI / 英文与简体中文界面
+- Persistent attachment ownership that does not depend on the current folder structure
+- Stable note identities stored in the `note-steward-id` frontmatter property
+- Per-note attachment folders at `<note folder>/assets/<note-steward-id>/`
+- Automatic attachment migration when an owner note moves
+- Shared attachment tracking with per-note and total reference counts
+- Automatic link updates through Obsidian's file manager
+- Tree-style document view for browsing attachments by owner note
+- Attachment view with search, reference filters, ownership filters, file-type filters, and sorting
+- Identification and multi-selection of zero-reference attachments
+- Confirmed cleanup through Obsidian's configured trash behavior
+- Index rebuilding, attachment relocation, and empty managed-folder cleanup
+- English and Simplified Chinese interface languages
 
-The plugin runs entirely inside the vault. It makes no network requests, collects no telemetry, and uses Obsidian's configured trash behavior for deletion.
+## Ownership model
 
-插件完全在本地仓库内运行，不发起网络请求、不收集遥测；删除操作遵循 Obsidian 已配置的回收站行为。
+Only Markdown files can own or reference attachments. Eligible non-Markdown vault files are tracked as attachments; internal document metadata sidecars are excluded.
 
-## Commands / 命令
+When an unowned attachment gains its first reference from a single note, Note Steward assigns that note as the owner and moves the attachment into the note's UUID-based attachment folder. Later references from other notes do not change the owner. If the owner note moves to another folder, its attachments move with it and Obsidian updates all links, including links from other notes.
 
-- Open document view / 打开文档视图
-- Open attachment view / 打开附件视图
-- Rebuild attachment index / 重建附件索引
+Removing the last reference does not delete the attachment or clear its ownership. The attachment remains available as a zero-reference item until you explicitly move it to the trash.
 
-## Development / 开发
+## Commands
 
-Requires Node.js 20 or newer.
+| Command                  | Command ID                          | Description                                                                                                         |
+| ------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Open document view       | `note-steward:open-document-view`   | Browse owner notes and their attachments. If a Markdown note is active, the view opens filtered to that note.       |
+| Open attachment view     | `note-steward:open-attachment-view` | Review attachment ownership, references, file types, and zero-reference items.                                      |
+| Rebuild attachment index | `note-steward:rebuild-index`        | Rebuild references, preserve trustworthy ownership, relocate owned attachments, and clean up empty managed folders. |
+
+## Manual installation
+
+Note Steward requires Obsidian 1.6.6 or newer.
+
+1. Build the plugin as described below.
+2. Create `<Vault>/.obsidian/plugins/note-steward/`.
+3. Copy `main.js`, `manifest.json`, and `styles.css` into that directory.
+4. Reload Obsidian.
+5. Enable **Note Steward** under **Settings → Community plugins**.
+
+## Development
+
+Node.js 20 or newer and npm are required.
 
 ```bash
 npm install
 npm run dev
 ```
 
-Validation:
+Run the complete validation suite before submitting changes:
 
 ```bash
 npm run format:check
@@ -44,6 +63,14 @@ npm test
 npm run build
 ```
 
-For manual installation, copy `main.js`, `manifest.json`, and `styles.css` into `<Vault>/.obsidian/plugins/note-steward/`.
+The production build writes `main.js` to the project root. Generated build artifacts and `node_modules/` are not committed.
 
-手动安装时，将 `main.js`、`manifest.json` 和 `styles.css` 复制到 `<Vault>/.obsidian/plugins/note-steward/`。
+## Data and privacy
+
+Ownership and reference indexes are stored in the plugin's local Obsidian data file. Note Steward reads and modifies files only inside the active vault. It does not use external services, make network requests, collect telemetry, or transmit vault contents.
+
+Deletion always requires confirmation and uses Obsidian's configured trash behavior. Attachments that gain references before deletion are skipped.
+
+## License
+
+[MIT](LICENSE)
