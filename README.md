@@ -7,11 +7,11 @@ The plugin works on desktop and mobile, makes no network requests, and collects 
 ## Features
 
 - Persistent attachment ownership that does not depend on the current folder structure
-- Stable note identities stored in the `note-steward-id` frontmatter property
-- Per-note attachment folders at `<note folder>/assets/<note-steward-id>/`
+- Stable note identities stored in the plugin's local data
+- Per-note attachment folders at `<note folder>/assets/<document UUID>/`
 - Automatic attachment migration when an owner note moves
 - Shared attachment tracking with per-note and total reference counts
-- Automatic link updates through Obsidian's file manager
+- Silent first-claim migration while editing, with standard Obsidian link updates for later moves
 - Tree-style document view for browsing attachments by owner note
 - Attachment view with search, reference filters, ownership filters, file-type filters, and sorting
 - Identification and multi-selection of zero-reference attachments
@@ -23,7 +23,9 @@ The plugin works on desktop and mobile, makes no network requests, and collects 
 
 Only Markdown files can own or reference attachments. Eligible non-Markdown vault files are tracked as attachments; internal document metadata sidecars are excluded.
 
-When an unowned attachment gains its first reference from a single note, Note Steward assigns that note as the owner and moves the attachment into the note's UUID-based attachment folder. Later references from other notes do not change the owner. If the owner note moves to another folder, its attachments move with it and Obsidian updates all links, including links from other notes.
+When an unowned attachment gains its first reference from a single note, Note Steward assigns that note as the owner and moves the attachment into the note's UUID-based attachment folder. If that note is currently being edited, Note Steward updates its links in one editor transaction so the move does not reload the note or produce Obsidian link-update notices. Later references from other notes do not change the owner. If the owner note moves to another folder, its attachments move with it and Obsidian updates all links, including links from other notes.
+
+New note UUIDs are stored only in Note Steward's plugin data. Existing `note-steward-id` frontmatter properties are left untouched and remain available as legacy recovery information, but the plugin does not add the property to newly claimed notes. If the plugin data file is lost, ownership created under this data-only model cannot always be recovered automatically.
 
 Removing the last reference does not delete the attachment or clear its ownership. The attachment remains available as a zero-reference item until you explicitly move it to the trash.
 

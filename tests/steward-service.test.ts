@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import type { App, TAbstractFile } from 'obsidian';
+import type {
+	App,
+	CachedMetadata,
+	Editor,
+	EditorChange,
+	TAbstractFile,
+} from 'obsidian';
 import { TFile, TFolder } from 'obsidian';
 import { createEmptyData } from '../src/core/model';
 import { StewardService } from '../src/services/steward-service';
@@ -13,6 +19,13 @@ interface Harness {
 	files: Map<string, TAbstractFile>;
 	addFolder: (path: string) => TFolder;
 	addFile: (path: string, size?: number, content?: string) => TFile;
+	setActiveEditor: (
+		file: TFile,
+		cache: CachedMetadata,
+	) => { content: () => string; transactionCount: () => number };
+	processFrontMatterCount: () => number;
+	fileManagerRenameCount: () => number;
+	vaultRenameCount: () => number;
 	lastSaved: () => NoteStewardData | null;
 	saveCount: () => number;
 }
@@ -29,8 +42,16 @@ function createHarness(
 	const frontmatter = new Map<string, Record<string, unknown>>();
 	const contents = new Map<string, string>();
 	const resolvedLinks: Record<string, Record<string, number>> = {};
+	const metadata = new Map<string, CachedMetadata>();
 	let saved: NoteStewardData | null = null;
 	let saves = 0;
+	let frontmatterWrites = 0;
+	let fileManagerRenames = 0;
+	let vaultRenames = 0;
+	const workspace: { activeEditor: { file: TFile; editor: Editor } | null } =
+		{
+			activeEditor: null,
+		};
 
 	const setFilePath = (file: TFile, path: string): void => {
 		file.path = path;
@@ -75,8 +96,43 @@ function createHarness(
 	const metadataCache = {
 		resolvedLinks,
 		getFileCache: (file: TFile) => ({
+			...(metadata.get(file.path) ?? {}),
 			frontmatter: frontmatter.get(file.path) ?? {},
 		}),
+		getFirstLinkpathDest: (link: string, sourcePath: string) => {
+			const path = link.split(/[#^]/u)[0] ?? link;
+			const direct = files.get(decodeURI(path));
+			if (direct instanceof TFile) return direct;
+			const destination = Object.keys(
+				resolvedLinks[sourcePath] ?? {},
+			).find(
+				(candidate) =>
+					candidate === path ||
+					candidate.endsWith(`/${path}`) ||
+					candidate.endsWith(`/${path.split('/').at(-1) ?? path}`),
+			);
+			const file = destination ? files.get(destination) : null;
+			return file instanceof TFile ? file : null;
+		},
+	};
+	const moveFile = (file: TFile, newPath: string): void => {
+		const oldPath = file.path;
+		if (file.parent)
+			file.parent.children = file.parent.children.filter(
+				(child) => child !== file,
+			);
+		files.delete(oldPath);
+		const content = contents.get(oldPath);
+		contents.delete(oldPath);
+		setFilePath(file, newPath);
+		const parentPath = newPath.includes('/')
+			? newPath.slice(0, newPath.lastIndexOf('/'))
+			: '';
+		const parent = files.get(parentPath);
+		file.parent = parent instanceof TFolder ? parent : null;
+		file.parent?.children.push(file);
+		files.set(newPath, file);
+		if (content !== undefined) contents.set(newPath, content);
 	};
 	const vault = {
 		getFiles: () =>
@@ -100,6 +156,13 @@ function createHarness(
 		createFolder: (path: string) => Promise.resolve(addFolder(path)),
 		cachedRead: (file: TFile) =>
 			Promise.resolve(contents.get(file.path) ?? ''),
+		rename: (file: TFile, newPath: string) => {
+			vaultRenames += 1;
+			if (options.failRename)
+				return Promise.reject(new Error('Simulated move failure'));
+			moveFile(file, newPath);
+			return Promise.resolve();
+		},
 		delete: (file: TAbstractFile) => {
 			if (file.parent)
 				file.parent.children = file.parent.children.filter(
@@ -112,31 +175,18 @@ function createHarness(
 	};
 	const fileManager = {
 		processFrontMatter: (file: TFile, update: (value: object) => void) => {
+			frontmatterWrites += 1;
 			const value = frontmatter.get(file.path) ?? {};
 			update(value);
 			frontmatter.set(file.path, value);
 			return Promise.resolve();
 		},
 		renameFile: (file: TFile, newPath: string) => {
+			fileManagerRenames += 1;
 			if (options.failRename)
 				return Promise.reject(new Error('Simulated move failure'));
 			const oldPath = file.path;
-			if (file.parent)
-				file.parent.children = file.parent.children.filter(
-					(child) => child !== file,
-				);
-			files.delete(oldPath);
-			const content = contents.get(oldPath);
-			contents.delete(oldPath);
-			setFilePath(file, newPath);
-			const parentPath = newPath.includes('/')
-				? newPath.slice(0, newPath.lastIndexOf('/'))
-				: '';
-			const parent = files.get(parentPath);
-			file.parent = parent instanceof TFolder ? parent : null;
-			file.parent?.children.push(file);
-			files.set(newPath, file);
-			if (content !== undefined) contents.set(newPath, content);
+			moveFile(file, newPath);
 			for (const destinations of Object.values(resolvedLinks)) {
 				const count = destinations[oldPath];
 				if (count === undefined) continue;
@@ -145,6 +195,12 @@ function createHarness(
 			}
 			return Promise.resolve();
 		},
+		generateMarkdownLink: (
+			file: TFile,
+			_sourcePath: string,
+			subpath = '',
+			alias?: string,
+		) => `[${alias ?? file.name}](${file.path}${subpath})`,
 		trashFile: (file: TAbstractFile) => {
 			if (file.parent)
 				file.parent.children = file.parent.children.filter(
@@ -160,12 +216,68 @@ function createHarness(
 		vault,
 		fileManager,
 		metadataCache,
+		workspace,
 	} as unknown as App;
 	const service = new StewardService(app, loadedData, (data) => {
 		saves += 1;
 		saved = structuredClone(data);
 		return Promise.resolve();
 	});
+
+	const setActiveEditor = (
+		file: TFile,
+		cache: CachedMetadata,
+	): { content: () => string; transactionCount: () => number } => {
+		metadata.set(file.path, cache);
+		let transactions = 0;
+		const positionToOffset = (
+			content: string,
+			position: { line: number; ch: number },
+		): number => {
+			const lines = content.split('\n');
+			return (
+				lines
+					.slice(0, position.line)
+					.reduce((total, line) => total + line.length + 1, 0) +
+				position.ch
+			);
+		};
+		const editor = {
+			getRange: (
+				from: { line: number; ch: number },
+				to: { line: number; ch: number },
+			) => {
+				const content = contents.get(file.path) ?? '';
+				return content.slice(
+					positionToOffset(content, from),
+					positionToOffset(content, to),
+				);
+			},
+			transaction: ({ changes = [] }: { changes?: EditorChange[] }) => {
+				transactions += 1;
+				let content = contents.get(file.path) ?? '';
+				for (const change of changes.slice().sort((left, right) => {
+					return (
+						positionToOffset(content, right.from) -
+						positionToOffset(content, left.from)
+					);
+				})) {
+					const from = positionToOffset(content, change.from);
+					const to = positionToOffset(
+						content,
+						change.to ?? change.from,
+					);
+					content = `${content.slice(0, from)}${change.text}${content.slice(to)}`;
+				}
+				contents.set(file.path, content);
+			},
+		} as unknown as Editor;
+		workspace.activeEditor = { file, editor };
+		return {
+			content: () => contents.get(file.path) ?? '',
+			transactionCount: () => transactions,
+		};
+	};
 
 	return {
 		service,
@@ -174,6 +286,10 @@ function createHarness(
 		files,
 		addFolder,
 		addFile,
+		setActiveEditor,
+		processFrontMatterCount: () => frontmatterWrites,
+		fileManagerRenameCount: () => fileManagerRenames,
+		vaultRenameCount: () => vaultRenames,
 		lastSaved: () => saved,
 		saveCount: () => saves,
 	};
@@ -229,7 +345,7 @@ describe('StewardService integration', () => {
 		);
 	});
 
-	it('claims a singly referenced attachment, writes the UUID, and moves the file', async () => {
+	it('claims a singly referenced attachment without writing frontmatter', async () => {
 		const harness = createHarness();
 		const note = harness.addFile('Projects/Plan.md');
 		const attachment = harness.addFile('Inbox/image.png', 42);
@@ -237,10 +353,13 @@ describe('StewardService integration', () => {
 
 		await harness.service.rebuildIndex();
 
-		const documentId = harness.frontmatter.get(note.path)?.[
-			'note-steward-id'
-		];
+		const document = Object.values(
+			harness.service.persistedData.documents,
+		).find((candidate) => candidate.path === note.path);
+		const documentId = document?.id;
 		expect(documentId).toEqual(expect.any(String));
+		expect(harness.frontmatter.get(note.path)).toBeUndefined();
+		expect(harness.processFrontMatterCount()).toBe(0);
 		expect(attachment.path).toBe(
 			`Projects/assets/${documentId as string}/image.png`,
 		);
@@ -258,6 +377,26 @@ describe('StewardService integration', () => {
 				attachments: [expect.objectContaining({ id: item?.id })],
 			}),
 		]);
+	});
+
+	it('preserves a data-only document UUID across rebuilds', async () => {
+		const harness = createHarness();
+		const note = harness.addFile('Projects/Plan.md');
+		const attachment = harness.addFile('Inbox/image.png');
+		harness.resolvedLinks[note.path] = { [attachment.path]: 1 };
+		await harness.service.rebuildIndex();
+		const documentId = Object.values(
+			harness.service.persistedData.documents,
+		).find((candidate) => candidate.path === note.path)?.id;
+
+		await harness.service.rebuildIndex();
+
+		expect(
+			Object.values(harness.service.persistedData.documents).find(
+				(candidate) => candidate.path === note.path,
+			)?.id,
+		).toBe(documentId);
+		expect(harness.frontmatter.get(note.path)).toBeUndefined();
 	});
 
 	it('rebuild reconsiders a blocked unclaimed attachment with one reference', async () => {
@@ -341,6 +480,93 @@ describe('StewardService integration', () => {
 			/^Projects\/assets\/[^/]+\/image\.png$/,
 		);
 		expect(harness.saveCount()).toBe(saves + 1);
+	});
+
+	it('silently moves a first claim referenced by the active editor', async () => {
+		const harness = createHarness();
+		const note = harness.addFile(
+			'Projects/Note.md',
+			10,
+			'![](../Inbox/image.png)',
+		);
+		const attachment = harness.addFile('Inbox/image.png');
+		await harness.service.rebuildIndex();
+		harness.resolvedLinks[note.path] = { [attachment.path]: 1 };
+		const editor = harness.setActiveEditor(note, {
+			embeds: [
+				{
+					link: '../Inbox/image.png',
+					original: '![](../Inbox/image.png)',
+					displayText: '',
+					position: {
+						start: { line: 0, col: 0, offset: 0 },
+						end: { line: 0, col: 24, offset: 24 },
+					},
+				},
+			],
+		});
+
+		await (
+			harness.service as unknown as {
+				reconcileReferenceSources: (
+					paths: Set<string>,
+				) => Promise<void>;
+			}
+		).reconcileReferenceSources(new Set([note.path]));
+
+		expect(harness.vaultRenameCount()).toBe(1);
+		expect(harness.fileManagerRenameCount()).toBe(0);
+		expect(harness.processFrontMatterCount()).toBe(0);
+		expect(editor.transactionCount()).toBe(1);
+		expect(editor.content()).toMatch(
+			/^!\[\]\(Projects\/assets\/[^/]+\/image\.png\)$/u,
+		);
+		expect(attachment.path).toMatch(
+			/^Projects\/assets\/[^/]+\/image\.png$/u,
+		);
+		expect(harness.service.getReviewItems()[0]?.ownershipState).toBe(
+			'owned',
+		);
+	});
+
+	it('does not move an active first claim when its cached range is stale', async () => {
+		const harness = createHarness();
+		const note = harness.addFile(
+			'Projects/Note.md',
+			10,
+			'changed ![](../Inbox/image.png)',
+		);
+		const attachment = harness.addFile('Inbox/image.png');
+		await harness.service.rebuildIndex();
+		harness.resolvedLinks[note.path] = { [attachment.path]: 1 };
+		harness.setActiveEditor(note, {
+			embeds: [
+				{
+					link: '../Inbox/image.png',
+					original: '![](../Inbox/image.png)',
+					displayText: '',
+					position: {
+						start: { line: 0, col: 0, offset: 0 },
+						end: { line: 0, col: 24, offset: 24 },
+					},
+				},
+			],
+		});
+
+		await (
+			harness.service as unknown as {
+				reconcileReferenceSources: (
+					paths: Set<string>,
+				) => Promise<void>;
+			}
+		).reconcileReferenceSources(new Set([note.path]));
+
+		expect(attachment.path).toBe('Inbox/image.png');
+		expect(harness.vaultRenameCount()).toBe(0);
+		expect(harness.fileManagerRenameCount()).toBe(0);
+		expect(harness.service.getReviewItems()[0]?.ownershipState).toBe(
+			'needs-repair',
+		);
 	});
 
 	it('prunes missing documents that no longer own attachments', async () => {

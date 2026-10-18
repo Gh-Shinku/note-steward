@@ -25,6 +25,7 @@ import {
 	ReviewItem,
 } from '../types';
 import { createId } from '../utils/id';
+import { moveFirstClaimSilently } from './silent-first-claim';
 
 type PersistData = (data: NoteStewardData) => Promise<void>;
 type ChangeListener = () => void;
@@ -38,6 +39,12 @@ interface MetadataClassification {
 	mtime: number;
 	size: number;
 	isDocumentMetadata: boolean;
+}
+
+interface NewClaim {
+	record: AttachmentRecord;
+	sourcePath: string;
+	referenceCount: number;
 }
 
 export class StewardService {
@@ -228,7 +235,7 @@ export class StewardService {
 			const attachment = this.data.attachments[attachmentId];
 			const note = this.app.vault.getFileByPath(notePath);
 			if (!attachment || !note || note.extension !== 'md') return false;
-			const document = await this.ensureDocument(note);
+			const document = this.ensureDocument(note);
 			if (!document) return false;
 			attachment.ownerDocumentId = document.id;
 			attachment.ownershipState = 'owned';
@@ -354,7 +361,7 @@ export class StewardService {
 		const referencesByPath = this.buildReferenceSnapshot();
 		const attachments: Record<string, AttachmentRecord> = {};
 		const references: Record<string, Record<string, number>> = {};
-		const newlyClaimed: AttachmentRecord[] = [];
+		const newlyClaimed: NewClaim[] = [];
 		const excludedAttachmentIds = new Set<string>();
 		const scannedJsonPaths = new Set<string>();
 
@@ -407,8 +414,8 @@ export class StewardService {
 				const note = sourcePath
 					? this.app.vault.getFileByPath(sourcePath)
 					: null;
-				if (note) {
-					const document = await this.ensureDocument(
+				if (sourcePath && note) {
+					const document = this.ensureDocument(
 						note,
 						documents,
 						issues,
@@ -418,7 +425,11 @@ export class StewardService {
 						record.ownershipState = 'owned';
 						record.claimedAt = Date.now();
 						record.claimBlocked = false;
-						newlyClaimed.push(record);
+						newlyClaimed.push({
+							record,
+							sourcePath,
+							referenceCount: currentReferences[sourcePath] ?? 0,
+						});
 					}
 				}
 			} else {
@@ -466,7 +477,7 @@ export class StewardService {
 			lastIndexedAt: Date.now(),
 		};
 		const toMove = moveNewClaims ? newlyClaimed : [];
-		for (const record of toMove) await this.moveAttachmentToOwner(record);
+		for (const claim of toMove) await this.moveNewClaimToOwner(claim);
 		if (persist) await this.saveAndNotify();
 	}
 
@@ -517,17 +528,22 @@ export class StewardService {
 				attachment.claimBlocked = true;
 			if (!shouldAutoClaim(attachment, references)) continue;
 			const [sourcePath] = Object.keys(references);
+			if (!sourcePath) continue;
 			const note = sourcePath
 				? this.app.vault.getFileByPath(sourcePath)
 				: null;
 			if (!(note instanceof TFile) || note.extension !== 'md') continue;
-			const document = await this.ensureDocument(note);
+			const document = this.ensureDocument(note);
 			if (!document) continue;
 			attachment.ownerDocumentId = document.id;
 			attachment.ownershipState = 'owned';
 			attachment.claimedAt = Date.now();
 			attachment.claimBlocked = false;
-			await this.moveAttachmentToOwner(attachment);
+			await this.moveNewClaimToOwner({
+				record: attachment,
+				sourcePath,
+				referenceCount: references[sourcePath] ?? 0,
+			});
 		}
 
 		if (changed) await this.saveAndNotify();
@@ -567,8 +583,19 @@ export class StewardService {
 		for (const [id, document] of Object.entries(previous)) {
 			documents[id] = { ...document, exists: false };
 		}
+		const previousByPath = new Map(
+			Object.values(previous).map((document) => [
+				document.path,
+				document,
+			]),
+		);
 
 		for (const note of this.getMarkdownFiles()) {
+			const persisted = previousByPath.get(note.path);
+			if (persisted) {
+				documents[persisted.id] = { ...persisted, exists: true };
+				continue;
+			}
 			const id = this.readDocumentId(note);
 			if (!id) continue;
 			const existing = documents[id];
@@ -637,11 +664,18 @@ export class StewardService {
 		return typeof value === 'string' && value.trim() ? value.trim() : null;
 	}
 
-	private async ensureDocument(
+	private ensureDocument(
 		note: TFile,
 		documents = this.data.documents,
 		issues = this.data.issues,
-	): Promise<DocumentRecord | null> {
+	): DocumentRecord | null {
+		const persisted = Object.values(documents).find(
+			(document) => document.path === note.path,
+		);
+		if (persisted) {
+			persisted.exists = true;
+			return persisted;
+		}
 		let id = this.readDocumentId(note);
 		if (id) {
 			const duplicate = documents[id];
@@ -656,13 +690,6 @@ export class StewardService {
 			}
 		} else {
 			id = createId();
-			const nextId = id;
-			await this.app.fileManager.processFrontMatter(
-				note,
-				(frontmatter: object) => {
-					Reflect.set(frontmatter, FRONTMATTER_ID_KEY, nextId);
-				},
-			);
 		}
 		const document = { id, path: note.path, exists: true };
 		documents[id] = document;
@@ -709,30 +736,98 @@ export class StewardService {
 			await this.ensureFolder(folder);
 			const desiredPath = normalizePath(`${folder}/${file.name}`);
 			const destination = this.findAvailablePath(desiredPath, file.path);
-			this.internalRenames.set(file, destination);
-			try {
-				await this.app.fileManager.renameFile(file, destination);
-			} finally {
-				this.internalRenames.delete(file);
-			}
+			await this.renameInternally(file, destination, true);
 			record.path = destination;
 			record.ownershipState = 'owned';
 			delete record.issue;
 		} catch (error) {
-			record.ownershipState = 'needs-repair';
-			record.issue =
-				error instanceof Error ? error.message : String(error);
-			this.data.issues.push({
-				id: createId(),
-				kind: 'move-failed',
-				path: record.path,
-				detail: record.issue,
-			});
+			this.markMoveFailed(
+				record,
+				error instanceof Error ? error.message : String(error),
+			);
 			return;
 		}
 
 		if (this.isManagedAttachmentFolder(previousFolder, owner.id)) {
 			await this.removeEmptyManagedFolderSafely(previousFolder);
+		}
+	}
+
+	private async moveNewClaimToOwner(claim: NewClaim): Promise<void> {
+		const { record, sourcePath, referenceCount } = claim;
+		if (!record.ownerDocumentId) return;
+		const owner = this.data.documents[record.ownerDocumentId];
+		const file = this.app.vault.getFileByPath(record.path);
+		const source = this.app.vault.getFileByPath(sourcePath);
+		if (!owner?.exists || !file || !source) return;
+		const editorInfo = this.app.workspace.activeEditor;
+		if (editorInfo?.file?.path !== sourcePath || !editorInfo.editor) {
+			await this.moveAttachmentToOwner(record);
+			return;
+		}
+
+		const folder = expectedAttachmentFolder(owner.path, owner.id);
+		if (parentPath(file.path) === folder) return;
+		const previousFolder = parentPath(file.path);
+		try {
+			await this.ensureFolder(folder);
+			const destination = this.findAvailablePath(
+				normalizePath(`${folder}/${file.name}`),
+				file.path,
+			);
+			const result = await moveFirstClaimSilently({
+				app: this.app,
+				source,
+				attachment: file,
+				destination,
+				expectedReferenceCount: referenceCount,
+				rename: async (target, path) =>
+					this.renameInternally(target, path, false),
+			});
+			if (!result.moved) {
+				this.markMoveFailed(record, result.reason);
+				return;
+			}
+			record.path = destination;
+			record.ownershipState = 'owned';
+			delete record.issue;
+		} catch (error) {
+			record.path = file.path;
+			this.markMoveFailed(
+				record,
+				error instanceof Error ? error.message : String(error),
+			);
+			return;
+		}
+
+		if (this.isManagedAttachmentFolder(previousFolder, owner.id)) {
+			await this.removeEmptyManagedFolderSafely(previousFolder);
+		}
+	}
+
+	private markMoveFailed(record: AttachmentRecord, detail: string): void {
+		record.ownershipState = 'needs-repair';
+		record.issue = detail;
+		this.data.issues.push({
+			id: createId(),
+			kind: 'move-failed',
+			path: record.path,
+			detail,
+		});
+	}
+
+	private async renameInternally(
+		file: TFile,
+		destination: string,
+		updateLinks: boolean,
+	): Promise<void> {
+		this.internalRenames.set(file, destination);
+		try {
+			if (updateLinks)
+				await this.app.fileManager.renameFile(file, destination);
+			else await this.app.vault.rename(file, destination);
+		} finally {
+			this.internalRenames.delete(file);
 		}
 	}
 

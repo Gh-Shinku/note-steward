@@ -104,3 +104,13 @@ export function normalizePath(path: string): string {
 		.replaceAll(/\/{2,}/g, '/')
 		.replace(/^\//, '');
 }
+
+export function parseLinktext(linktext: string): {
+	path: string;
+	subpath: string;
+} {
+	const marker = linktext.search(/[#^]/u);
+	return marker < 0
+		? { path: linktext, subpath: '' }
+		: { path: linktext.slice(0, marker), subpath: linktext.slice(marker) };
+}
